@@ -1,5 +1,5 @@
 'use client'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 const COINS = ['BTC', 'ETH', 'SOL', 'AGENT', 'BNB']
 
@@ -31,6 +31,7 @@ export default function Cockpit() {
   const [log, setLog] = useState(seedLog)
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(false)
+  const [autoRunning, setAutoRunning] = useState(true)
   const [agentPrompt, setAgentPrompt] = useState(
 `You are an autonomous trading agent on Agent Arena.
 Monitor: BTC, ETH, SOL, $AGENT
@@ -42,6 +43,34 @@ Stop-loss: trailing 2%
 Take-profit: 1:3 risk/reward
 Use RSI, MACD, MA crossovers.
 Explain every decision in plain English.`)
+
+  useEffect(() => {
+    if (!autoRunning) return
+    const interval = setInterval(async () => {
+      const autoPrompts = [
+        'Scan current market conditions and report what you see',
+        'Check if any positions need adjusting based on current RSI levels',
+        'Review portfolio exposure and suggest any rebalancing',
+        'Look for new entry opportunities across monitored coins',
+        'Run a risk check on all open positions',
+      ]
+      const randomPrompt = autoPrompts[Math.floor(Math.random() * autoPrompts.length)]
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userInstruction: randomPrompt, agentPrompt })
+      })
+      const data = await res.json()
+      const now = new Date()
+      const t = `${now.getHours()}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`
+      setLog(prev => [{
+        color: 'blue', label: 'Auto scan', time: t,
+        msg: randomPrompt,
+        reason: data.response
+      }, ...prev])
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [autoRunning, agentPrompt])
 
   async function sendPrompt() {
     if (!prompt.trim() || loading) return
@@ -118,9 +147,13 @@ Explain every decision in plain English.`)
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-medium">Agent thought log</span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>
                 <span className="text-xs text-gray-400">live</span>
+                <button onClick={() => setAutoRunning(p => !p)}
+                  className={`text-xs px-2 py-0.5 rounded-full border ${autoRunning ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-100 text-gray-400 border-gray-200'}`}>
+                  {autoRunning ? 'auto: on' : 'auto: off'}
+                </button>
               </div>
             </div>
             <div className="flex flex-col gap-0 max-h-72 overflow-y-auto">

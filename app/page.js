@@ -4,11 +4,11 @@ import Cockpit from './components/Cockpit'
 import Leaderboard from './components/Leaderboard'
 import History from './components/History'
 import RiskSettings from './components/RiskSettings'
+import MemeCoinTracker from './components/MemeCoinTracker'
 
 function LandingPage({ onLaunch }) {
   return (
     <div style={{minHeight:'100vh',background:'#0a0a0a',color:'white',fontFamily:'sans-serif'}}>
-      
       <nav style={{padding:'0 40px',height:'60px',display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid #1a1a1a'}}>
         <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
           <div style={{width:'28px',height:'28px',borderRadius:'50%',background:'#10b981'}}/>
@@ -28,16 +28,13 @@ function LandingPage({ onLaunch }) {
         <div style={{display:'inline-block',background:'#0f2d1f',color:'#10b981',fontSize:'12px',fontWeight:'600',padding:'6px 14px',borderRadius:'99px',marginBottom:'28px',border:'1px solid #1a5c3a'}}>
           Powered by $AGENT coin — trade on Axiom
         </div>
-        
         <h1 style={{fontSize:'56px',fontWeight:'700',lineHeight:'1.15',marginBottom:'24px',letterSpacing:'-1px'}}>
           Deploy AI trading agents.<br/>
           <span style={{color:'#10b981'}}>Compete publicly. Win.</span>
         </h1>
-        
         <p style={{fontSize:'18px',color:'#888',lineHeight:'1.7',maxWidth:'560px',margin:'0 auto 40px'}}>
           Build your stable of AI agents, run them against real market data, and climb the global leaderboard. Top agents earn $AGENT coin.
         </p>
-        
         <div style={{display:'flex',gap:'12px',justifyContent:'center',marginBottom:'60px'}}>
           <button onClick={onLaunch} style={{background:'#10b981',color:'white',border:'none',padding:'14px 32px',borderRadius:'10px',fontSize:'15px',fontWeight:'600',cursor:'pointer'}}>
             Launch your agent
@@ -76,7 +73,7 @@ function LandingPage({ onLaunch }) {
         <div style={{background:'#111',border:'1px solid #1e1e1e',borderRadius:'16px',padding:'32px',marginBottom:'80px',textAlign:'left'}}>
           <div style={{fontSize:'13px',color:'#555',marginBottom:'20px',textTransform:'uppercase',letterSpacing:'0.1em'}}>Live leaderboard</div>
           <div style={{display:'grid',gridTemplateColumns:'28px 1fr 80px 70px 90px',gap:'10px',padding:'8px 0',borderBottom:'1px solid #1e1e1e',fontSize:'11px',color:'#555',fontWeight:'600'}}>
-            <div>#</div><div>Agent</div><div style={{textAlign:'right'}}>Return</div><div style={{textAlign:'right'}}>Win rate</div><div style={{textAlign:'right'}}></div>
+            <div>#</div><div>Agent</div><div style={{textAlign:'right'}}>Return</div><div style={{textAlign:'right'}}>Win rate</div><div></div>
           </div>
           {[
             [1,'AlphaScalper X','@cryptowolf','+341%','78%','#b45309'],
@@ -132,6 +129,7 @@ export default function Home() {
 
   const tabs = [
     { id: 'cockpit', label: 'Agent cockpit' },
+    { id: 'memecoins', label: 'Meme coins' },
     { id: 'history', label: 'Trade history' },
     { id: 'risk', label: 'Risk settings' },
     { id: 'leaderboard', label: 'Leaderboard' },
@@ -162,6 +160,7 @@ export default function Home() {
       </nav>
       <main className="max-w-6xl mx-auto px-4 py-4">
         {tab === 'cockpit' && <Cockpit />}
+        {tab === 'memecoins' && <MemeCoinTracker />}
         {tab === 'history' && <History />}
         {tab === 'risk' && <RiskSettings />}
         {tab === 'leaderboard' && <Leaderboard />}

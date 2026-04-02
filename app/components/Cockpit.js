@@ -1,7 +1,7 @@
 'use client'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 
-const COINS = ['BTC', 'ETH', 'SOL', 'AGENT', 'BNB']
+const COINS = ['BTC', 'ETH', 'SOL', 'BNB']
 
 const seedLog = [
   { color: 'emerald', label: 'Trade executed', time: '14:32:01',
@@ -32,6 +32,9 @@ export default function Cockpit() {
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(false)
   const [autoRunning, setAutoRunning] = useState(true)
+  const [prices, setPrices] = useState({ BTC: null, ETH: null, SOL: null, BNB: null })
+  const [changes, setChanges] = useState({ BTC: null, ETH: null, SOL: null, BNB: null })
+  const [chartPoints, setChartPoints] = useState([])
   const [agentPrompt, setAgentPrompt] = useState(
 `You are an autonomous trading agent on Agent Arena.
 Monitor: BTC, ETH, SOL, $AGENT
@@ -43,6 +46,49 @@ Stop-loss: trailing 2%
 Take-profit: 1:3 risk/reward
 Use RSI, MACD, MA crossovers.
 Explain every decision in plain English.`)
+
+  useEffect(() => {
+    async function fetchPrices() {
+      try {
+        const symbols = ['BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT']
+        const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`)
+        const data = await res.json()
+        const p = {}
+        const c = {}
+        data.forEach(d => {
+          const key = d.symbol.replace('USDT','')
+          p[key] = parseFloat(d.lastPrice).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})
+          c[key] = parseFloat(d.priceChangePercent).toFixed(2)
+        })
+        setPrices(p)
+        setChanges(c)
+      } catch(e) {}
+    }
+    fetchPrices()
+    const interval = setInterval(fetchPrices, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
+  useEffect(() => {
+    async function fetchChart() {
+      try {
+        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${coin}USDT&interval=1h&limit=24`)
+        const data = await res.json()
+        const closes = data.map(d => parseFloat(d[4]))
+        const min = Math.min(...closes)
+        const max = Math.max(...closes)
+        const points = closes.map((v, i) => {
+          const x = (i / (closes.length - 1)) * 500
+          const y = 110 - ((v - min) / (max - min)) * 100
+          return `${x.toFixed(1)},${y.toFixed(1)}`
+        }).join(' ')
+        setChartPoints(points)
+      } catch(e) {}
+    }
+    fetchChart()
+    const interval = setInterval(fetchChart, 30000)
+    return () => clearInterval(interval)
+  }, [coin])
 
   useEffect(() => {
     if (!autoRunning) return
@@ -109,32 +155,36 @@ Explain every decision in plain English.`)
         ))}
       </div>
 
+      <div className="grid grid-cols-4 gap-3 mb-4">
+        {COINS.map(c => (
+          <div key={c} onClick={() => setCoin(c)}
+            className={`rounded-lg p-3 cursor-pointer border transition-all ${coin===c ? 'bg-white border-emerald-300' : 'bg-gray-50 border-gray-200'}`}>
+            <div className="flex justify-between items-center mb-1">
+              <span className="text-xs font-medium text-gray-500">{c}/USDT</span>
+              <span className={`text-xs font-medium ${changes[c] >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                {changes[c] ? `${changes[c] >= 0 ? '+' : ''}${changes[c]}%` : '...'}
+              </span>
+            </div>
+            <div className="text-lg font-medium">${prices[c] || '...'}</div>
+          </div>
+        ))}
+      </div>
+
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 flex flex-col gap-4">
 
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium">Live chart</span>
-              <span className="text-xs text-gray-400">{coin}/USDT · 1h</span>
-            </div>
-            <div className="flex gap-2 mb-3">
-              {COINS.map(c => (
-                <button key={c} onClick={() => setCoin(c)}
-                  className={`text-xs px-3 py-1 rounded-full border transition-colors ${coin===c ? 'bg-emerald-50 text-emerald-800 border-emerald-300 font-medium' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                  {c}
-                </button>
-              ))}
+              <span className="text-sm font-medium">Live chart — {coin}/USDT</span>
+              <span className="text-xs text-gray-400">${prices[coin] || '...'} · 1h · 24 candles</span>
             </div>
             <div className="bg-gray-50 rounded-lg h-44">
-              <svg viewBox="0 0 500 120" className="w-full h-36">
-                <polyline points="0,90 40,82 80,95 120,72 160,68 200,78 240,55 280,50 320,60 360,42 400,46 440,34 480,38 500,28"
-                  fill="none" stroke="#10b981" strokeWidth="2"/>
-                <polyline points="0,90 40,82 80,95 120,72 160,68 200,78 240,55 280,50 320,60 360,42 400,46 440,34 480,38 500,28 500,120 0,120"
-                  fill="#d1fae5" opacity="0.5"/>
-                <line x1="240" y1="0" x2="240" y2="120" stroke="#10b981" strokeWidth="1" strokeDasharray="3,3" opacity="0.6"/>
-                <text x="243" y="12" fontSize="8" fill="#059669">BUY</text>
-                <line x1="400" y1="0" x2="400" y2="120" stroke="#ef4444" strokeWidth="1" strokeDasharray="3,3" opacity="0.6"/>
-                <text x="403" y="12" fontSize="8" fill="#dc2626">SELL</text>
+              <svg viewBox="0 0 500 120" className="w-full h-full" preserveAspectRatio="none">
+                {chartPoints && <>
+                  <polyline points={chartPoints} fill="none" stroke="#10b981" strokeWidth="2"/>
+                  <polyline points={chartPoints + ' 500,120 0,120'} fill="#d1fae5" opacity="0.4"/>
+                </>}
+                {!chartPoints && <text x="250" y="60" textAnchor="middle" fontSize="12" fill="#9ca3af">Loading chart...</text>}
               </svg>
             </div>
             <div className="flex gap-2 flex-wrap mt-3">

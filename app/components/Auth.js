@@ -59,7 +59,8 @@ Stop-loss: trailing 2%
 Take-profit: 1:3 risk/reward
 Use RSI, MACD, MA crossovers.
 Explain every decision in plain English.`,
-      })if (insertError) console.log('INSERT ERROR:', insertError.message)
+      });
+if (insertError) console.log('INSERT ERROR:', insertError.message)
       setShowVerifyPopup(true)
     }
     setLoading(false)

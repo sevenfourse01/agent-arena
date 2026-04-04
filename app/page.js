@@ -196,7 +196,7 @@ export default function Home() {
       <nav className="bg-white border-b border-gray-200 px-6 h-12 flex items-center justify-between">
         <div className="flex items-center gap-2 cursor-pointer" onClick={() => setPage('landing')}>
           <div className="w-5 h-5 rounded-full bg-emerald-500" />
-          <span className="font-medium text-sm">Agent Arena</span>
+          <span className="font-medium text-sm text-gray-900">Agent Arena</span>
         </div>
         <div className="flex overflow-x-auto">
           {tabs.map(t => (

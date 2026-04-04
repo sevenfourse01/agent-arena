@@ -44,7 +44,7 @@ export default function Auth({ onLogin }) {
     if (error) { setError(error.message); setLoading(false); return }
 
     if (data.user) {
-      await supabase.from('profiles').insert({
+      const { error: insertError } = await supabase.from('profiles').insert({
         id: data.user.id,
         username: username.trim(),
         wallet_public_key:  walletPublicKey,
@@ -59,7 +59,7 @@ Stop-loss: trailing 2%
 Take-profit: 1:3 risk/reward
 Use RSI, MACD, MA crossovers.
 Explain every decision in plain English.`,
-      })
+      })if (insertError) console.log('INSERT ERROR:', insertError.message)
       setShowVerifyPopup(true)
     }
     setLoading(false)

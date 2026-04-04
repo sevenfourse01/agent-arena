@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
+import { Keypair } from '@solana/web3.js'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -33,12 +34,21 @@ export default function Auth({ onLogin }) {
     setLoading(true)
     setError('')
     if (!username.trim()) { setError('Username is required'); setLoading(false); return }
+
+    // Generate a new Solana wallet for this user's agent
+    const wallet = Keypair.generate()
+    const walletPublicKey  = wallet.publicKey.toString()
+    const walletPrivateKey = Buffer.from(wallet.secretKey).toString('base64')
+
     const { data, error } = await supabase.auth.signUp({ email, password })
     if (error) { setError(error.message); setLoading(false); return }
+
     if (data.user) {
       await supabase.from('profiles').insert({
         id: data.user.id,
         username: username.trim(),
+        wallet_public_key:  walletPublicKey,
+        wallet_private_key: walletPrivateKey,
         agent_prompt: `You are an autonomous trading agent on Agent Arena.
 Monitor: BTC, ETH, SOL, $AGENT
 Strategy: momentum + sentiment hybrid

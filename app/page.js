@@ -217,7 +217,7 @@ export default function Home() {
       </nav>
       <main className="max-w-6xl mx-auto px-4 py-4">
         {tab === 'cockpit'      && <Cockpit />}
-        {tab === 'memecoins'    && <MemeCoinTracker />}
+        {tab === 'memecoins' && <MemeCoinTracker user={user} />}
         {tab === 'history'      && <History />}
         {tab === 'risk'         && <RiskSettings />}
         {tab === 'leaderboard'  && <Leaderboard />}

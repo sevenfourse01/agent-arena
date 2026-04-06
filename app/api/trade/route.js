@@ -20,11 +20,41 @@ const COIN_SYMBOLS = {
 async function fetchPrices(coins) {
   const symbols = [...new Set(coins.map(c => COIN_SYMBOLS[c]).filter(Boolean))]
   if (!symbols.length) return {}
-  const res  = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`)
-  const data = await res.json()
-const prices = {}
-const list = Array.isArray(data) ? data : []
-list.forEach(d => {
+  try {
+    if (symbols.length === 1) {
+      const res  = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbols[0]}`)
+      const d    = await res.json()
+      const prices = {}
+      const coin = Object.entries(COIN_SYMBOLS).find(([k,v]) => v === d.symbol)?.[0]
+      if (coin) prices[coin] = {
+        price:     parseFloat(d.lastPrice),
+        change24h: parseFloat(d.priceChangePercent),
+        high24h:   parseFloat(d.highPrice),
+        low24h:    parseFloat(d.lowPrice),
+        volume:    parseFloat(d.volume),
+      }
+      return prices
+    }
+    const res  = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`)
+    const data = await res.json()
+    const prices = {}
+    const list = Array.isArray(data) ? data : []
+    list.forEach(d => {
+      const coin = Object.entries(COIN_SYMBOLS).find(([k,v]) => v === d.symbol)?.[0]
+      if (coin) prices[coin] = {
+        price:     parseFloat(d.lastPrice),
+        change24h: parseFloat(d.priceChangePercent),
+        high24h:   parseFloat(d.highPrice),
+        low24h:    parseFloat(d.lowPrice),
+        volume:    parseFloat(d.volume),
+      }
+    })
+    return prices
+  } catch (e) {
+    console.error('fetchPrices error:', e)
+    return {}
+  }
+}
     const coin = Object.entries(COIN_SYMBOLS).find(([k,v]) => v === d.symbol)?.[0]
     if (coin) prices[coin] = {
       price:     parseFloat(d.lastPrice),

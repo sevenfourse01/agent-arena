@@ -189,9 +189,11 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       const now  = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
 
       if (data.error || !data.action) {
-  setLog(prev => [{ color:'red', label:'Error', time:t, msg:'Trade scan failed — check API key and agent settings', reason: data.error || 'No response from trading engine' }, ...prev])
-  return
-}
+        setLog(prev => [{ color:'red', label:'Error', time:t, msg:'Trade scan failed — check API key and agent settings', reason: data.error || 'No response from trading engine' }, ...prev])
+        return
+      }
+
+      if (data.action === 'HOLD') {
         setLog(prev => [{ color:'amber', label:'Hold', time:now, msg:`No trade — holding position.`, reason:data.reasoning }, ...prev])
       } else if (data.action === 'CLOSE') {
         const pnl = data.trade?.pnl || 0
@@ -202,7 +204,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
           msg:   `Closed ${data.coin} position at ${formatPrice(data.price)} — PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
           reason: data.reasoning
         }, ...prev])
-        // Refresh agent data
         const { data: updatedAgent } = await supabase.from('agents').select('*').eq('id', agent.id).single()
         if (updatedAgent) setAgent(updatedAgent)
       } else {

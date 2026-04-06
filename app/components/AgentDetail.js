@@ -188,7 +188,10 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       const data = await res.json()
       const now  = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
 
-      if (data.action === 'HOLD') {
+      if (data.error || !data.action) {
+  setLog(prev => [{ color:'red', label:'Error', time:t, msg:'Trade scan failed — check API key and agent settings', reason: data.error || 'No response from trading engine' }, ...prev])
+  return
+}
         setLog(prev => [{ color:'amber', label:'Hold', time:now, msg:`No trade — holding position.`, reason:data.reasoning }, ...prev])
       } else if (data.action === 'CLOSE') {
         const pnl = data.trade?.pnl || 0

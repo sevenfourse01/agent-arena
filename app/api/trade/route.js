@@ -22,8 +22,8 @@ async function fetchPrices(coins) {
   if (!symbols.length) return {}
   try {
     if (symbols.length === 1) {
-      const res  = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbols[0]}`)
-      const d    = await res.json()
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbols[0]}`)
+      const d   = await res.json()
       const prices = {}
       const coin = Object.entries(COIN_SYMBOLS).find(([k,v]) => v === d.symbol)?.[0]
       if (coin) prices[coin] = {
@@ -54,17 +54,6 @@ async function fetchPrices(coins) {
     console.error('fetchPrices error:', e)
     return {}
   }
-}
-    const coin = Object.entries(COIN_SYMBOLS).find(([k,v]) => v === d.symbol)?.[0]
-    if (coin) prices[coin] = {
-      price:     parseFloat(d.lastPrice),
-      change24h: parseFloat(d.priceChangePercent),
-      high24h:   parseFloat(d.highPrice),
-      low24h:    parseFloat(d.lowPrice),
-      volume:    parseFloat(d.volume),
-    }
-  })
-  return prices
 }
 
 async function fetchKlines(symbol, interval='1h', limit=24) {
@@ -113,7 +102,6 @@ export async function POST(req) {
 
     if (!agentId || !userId) return Response.json({ error: 'Missing agentId or userId' }, { status: 400 })
 
-    // Fetch live prices and indicators for all coins
     const prices  = await fetchPrices(coins)
     const analysis = {}
 
@@ -133,7 +121,6 @@ export async function POST(req) {
     const risk = riskSettings || {}
     const behavior = behaviorSettings || {}
 
-    // Build market context for Claude
     const marketContext = Object.entries(analysis).map(([coin, data]) => `
 ${coin}/USDT:
   Price: $${data.price}
@@ -196,30 +183,27 @@ Only trade if you have genuine conviction. Explain your reasoning clearly.`
       decision = { action: 'HOLD', coin: null, amount_pct: 0, reasoning: text, confidence: 5, indicators_used: [] }
     }
 
-    // If HOLD, just return the decision with no trade
     if (decision.action === 'HOLD' || !decision.coin) {
       return Response.json({
-        action:    'HOLD',
-        reasoning: decision.reasoning,
+        action:     'HOLD',
+        reasoning:  decision.reasoning,
         confidence: decision.confidence,
         marketData: analysis,
-        tradeId:   null,
+        tradeId:    null,
       })
     }
 
     const coinPrice = analysis[decision.coin]?.price
     if (!coinPrice) return Response.json({ action:'HOLD', reasoning:'Price unavailable', marketData: analysis })
 
-    // Calculate trade size
-    const maxRiskPct = risk.maxRiskPerTrade || 2
+    const maxRiskPct    = risk.maxRiskPerTrade || 2
     const allocationPct = Math.min(decision.amount_pct || maxRiskPct, risk.maxSingleAsset || 30)
     const allocationUsd = (portfolioValue * allocationPct) / 100
-    const units = allocationUsd / coinPrice
+    const units         = allocationUsd / coinPrice
 
     let tradeRecord = null
 
     if (decision.action === 'CLOSE') {
-      // Find the open position and close it
       const { data: openTrade } = await supabase
         .from('trades')
         .select('*')
@@ -237,12 +221,11 @@ Only trade if you have genuine conviction. Explain your reasoning clearly.`
           closed_at: new Date().toISOString(),
         }).eq('id', openTrade.id)
 
-        // Update agent portfolio
         const newPortfolioValue = portfolioValue + pnl
         const { data: allTrades } = await supabase.from('trades').select('pnl').eq('agent_id', agentId).eq('status', 'closed')
-        const wins     = (allTrades || []).filter(t => t.pnl > 0).length
-        const total    = (allTrades || []).length
-        const winRate  = total > 0 ? Math.round((wins / total) * 100) : 0
+        const wins    = (allTrades || []).filter(t => t.pnl > 0).length
+        const total   = (allTrades || []).length
+        const winRate = total > 0 ? Math.round((wins / total) * 100) : 0
         const totalRet = ((newPortfolioValue - 10000) / 10000) * 100
         const maxDD    = Math.min(0, totalRet)
 
@@ -256,7 +239,6 @@ Only trade if you have genuine conviction. Explain your reasoning clearly.`
         tradeRecord = { ...openTrade, exit_price: coinPrice, pnl, status: 'closed' }
       }
     } else {
-      // Open new trade (BUY or SELL/short)
       const { data: newTrade } = await supabase.from('trades').insert({
         agent_id:    agentId,
         user_id:     userId,
@@ -272,15 +254,15 @@ Only trade if you have genuine conviction. Explain your reasoning clearly.`
     }
 
     return Response.json({
-      action:      decision.action,
-      coin:        decision.coin,
-      price:       coinPrice,
-      amount:      units,
-      reasoning:   decision.reasoning,
-      confidence:  decision.confidence,
-      indicators:  decision.indicators_used,
-      marketData:  analysis,
-      trade:       tradeRecord,
+      action:     decision.action,
+      coin:       decision.coin,
+      price:      coinPrice,
+      amount:     units,
+      reasoning:  decision.reasoning,
+      confidence: decision.confidence,
+      indicators: decision.indicators_used,
+      marketData: analysis,
+      trade:      tradeRecord,
     })
 
   } catch (err) {

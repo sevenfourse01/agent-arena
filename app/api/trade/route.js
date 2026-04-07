@@ -88,6 +88,7 @@ export async function POST(req) {
     if (!agentId || !userId) return Response.json({ error: 'Missing agentId or userId' }, { status: 400 })
 
     const prices  = await fetchPrices(coins)
+    console.log('prices fetched:', JSON.stringify(prices))
     const analysis = {}
 
     for (const coin of coins) {
@@ -103,6 +104,7 @@ export async function POST(req) {
       }
     }
 
+    console.log('analysis:', JSON.stringify(analysis))
     const risk = riskSettings || {}
     const behavior = behaviorSettings || {}
 

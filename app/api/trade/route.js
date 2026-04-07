@@ -8,6 +8,15 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 )
 
+const COINGECKO_IDS = {
+  BTC:   'bitcoin',
+  ETH:   'ethereum',
+  SOL:   'solana',
+  BNB:   'binancecoin',
+  AGENT: 'solana',
+  MEME:  'solana',
+}
+
 const COIN_SYMBOLS = {
   BTC:   'BTCUSDT',
   ETH:   'ETHUSDT',
@@ -19,26 +28,30 @@ const COIN_SYMBOLS = {
 
 async function fetchPrices(coins) {
   const prices = {}
-  const uniqueCoins = [...new Set(coins.filter(c => COIN_SYMBOLS[c]))]
-  await Promise.all(uniqueCoins.map(async coin => {
-    try {
-      const symbol = COIN_SYMBOLS[coin]
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
-      const d   = await res.json()
-      console.log(`binance response for ${coin}:`, JSON.stringify(d).slice(0, 200))
-      if (d && d.symbol) {
+  try {
+    const uniqueCoins = [...new Set(coins.filter(c => COINGECKO_IDS[c]))]
+    const ids = [...new Set(uniqueCoins.map(c => COINGECKO_IDS[c]))].join(',')
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_high_24hr=true&include_low_24hr=true`,
+      { headers: { 'Accept': 'application/json' } }
+    )
+    const data = await res.json()
+    console.log('coingecko response:', JSON.stringify(data).slice(0, 500))
+    for (const coin of uniqueCoins) {
+      const id = COINGECKO_IDS[coin]
+      if (data[id]) {
         prices[coin] = {
-          price:     parseFloat(d.lastPrice),
-          change24h: parseFloat(d.priceChangePercent),
-          high24h:   parseFloat(d.highPrice),
-          low24h:    parseFloat(d.lowPrice),
-          volume:    parseFloat(d.volume),
+          price:     data[id].usd || 0,
+          change24h: data[id].usd_24h_change || 0,
+          high24h:   data[id].usd_24h_high || data[id].usd || 0,
+          low24h:    data[id].usd_24h_low  || data[id].usd || 0,
+          volume:    data[id].usd_24h_vol  || 0,
         }
       }
-    } catch (e) {
-      console.error(`fetchPrices error for ${coin}:`, e)
     }
-  }))
+  } catch (e) {
+    console.error('fetchPrices error:', e)
+  }
   return prices
 }
 
@@ -46,6 +59,7 @@ async function fetchKlines(symbol, interval='1h', limit=24) {
   try {
     const res  = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`)
     const data = await res.json()
+    if (!Array.isArray(data)) return []
     return data.map(d => ({
       open:   parseFloat(d[1]),
       high:   parseFloat(d[2]),
@@ -88,14 +102,14 @@ export async function POST(req) {
 
     if (!agentId || !userId) return Response.json({ error: 'Missing agentId or userId' }, { status: 400 })
 
-    const prices  = await fetchPrices(coins)
+    const prices   = await fetchPrices(coins)
     console.log('prices fetched:', JSON.stringify(prices))
     const analysis = {}
 
     for (const coin of coins) {
+      if (!prices[coin]) continue
       const symbol = COIN_SYMBOLS[coin]
-      if (!symbol || !prices[coin]) continue
-      const klines = await fetchKlines(symbol)
+      const klines = symbol ? await fetchKlines(symbol) : []
       const closes = klines.map(k => k.close)
       analysis[coin] = {
         ...prices[coin],
@@ -105,18 +119,19 @@ export async function POST(req) {
       }
     }
 
-    console.log('analysis:', JSON.stringify(analysis))
-    const risk = riskSettings || {}
+    console.log('analysis keys:', Object.keys(analysis))
+
+    const risk     = riskSettings || {}
     const behavior = behaviorSettings || {}
 
     const marketContext = Object.entries(analysis).map(([coin, data]) => `
 ${coin}/USDT:
   Price: $${data.price}
-  24h Change: ${data.change24h}%
+  24h Change: ${data.change24h?.toFixed(2)}%
   24h High: $${data.high24h} | Low: $${data.low24h}
   RSI(14): ${data.rsi}
   MACD: ${data.macd.macd} | Signal: ${data.macd.signal} | Hist: ${data.macd.histogram}
-  Recent candles (1h): ${data.recentCandles}
+  Recent candles (1h): ${data.recentCandles || 'unavailable'}
 `).join('\n')
 
     const openPositionsContext = openPositions?.length > 0

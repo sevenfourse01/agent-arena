@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@supabase/supabase-js'
+import { startPriceStore, stopPriceStore, subscribePrices, getRawPrices } from '@/lib/priceStore'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -33,12 +34,6 @@ function formatPrice(n) {
   return '$' + n.toFixed(4)
 }
 
-function formatTime(ts, interval) {
-  const d = new Date(ts)
-  if (interval === '1h') return d.toLocaleDateString('en-GB', { day:'numeric', month:'short' })
-  return d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' })
-}
-
 function MiniChart({ symbol, tf }) {
   const [candles, setCandles] = useState([])
   const [loading, setLoading] = useState(true)
@@ -50,7 +45,7 @@ function MiniChart({ symbol, tf }) {
       try {
         const res  = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf.interval}&limit=${tf.limit}`)
         const data = await res.json()
-        setCandles(data.map(d => ({ t:d[0], o:parseFloat(d[1]), h:parseFloat(d[2]), l:parseFloat(d[3]), c:parseFloat(d[4]) })))
+        if (Array.isArray(data)) setCandles(data.map(d => ({ t:d[0], o:parseFloat(d[1]), h:parseFloat(d[2]), l:parseFloat(d[3]), c:parseFloat(d[4]) })))
       } catch {}
       setLoading(false)
     }
@@ -108,7 +103,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [log, setLog]             = useState([{
     color:'blue', label:'Initialised', time: new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),
     msg:'Agent ready. Press "Start trading" to begin paper trading with fake tokens.',
-    reason:'All systems operational. Will scan markets and make trading decisions every 30 seconds.'
+    reason:'All systems operational. Will scan markets and make trading decisions every 60 seconds.'
   }])
   const [trades, setTrades]       = useState([])
   const [openPositions, setOpenPositions] = useState([])
@@ -122,13 +117,23 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [saving, setSaving]       = useState(false)
   const [saveMsg, setSaveMsg]     = useState('')
   const [agentPrompt, setAgentPrompt] = useState(agent.prompt || '')
-  const [nextScanIn, setNextScanIn]   = useState(30)
-  const tradingRef = useRef(false)
+  const [nextScanIn, setNextScanIn]   = useState(60)
+  const tradingRef  = useRef(false)
   const intervalRef = useRef(null)
   const countdownRef = useRef(null)
 
   const coins = Array.isArray(agent.coins) ? agent.coins.filter(c => COIN_MAP[c]) : ['BTC']
   const activeCoin = selectedCoin || coins[0] || 'BTC'
+
+  // Start central price store
+  useEffect(() => {
+    startPriceStore()
+    const unsub = subscribePrices(({ prices: p, changes: c }) => {
+      setPrices(p)
+      setChanges(c)
+    })
+    return () => { unsub(); stopPriceStore() }
+  }, [])
 
   // Load trades from Supabase
   useEffect(() => {
@@ -140,49 +145,28 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     loadTrades()
   }, [agent.id])
 
-  // Live prices
-  useEffect(() => {
-    const symbols = [...new Set(coins.map(c => COIN_MAP[c]).filter(Boolean))]
-    if (!symbols.length) return
-    async function fetchPrices() {
-      try {
-        const res  = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`)
-        const data = await res.json()
-        const p = {}, c = {}
-        data.forEach(d => {
-          const coin = Object.entries(COIN_MAP).find(([k,v])=>v===d.symbol)?.[0]
-          if (coin) {
-            p[coin] = parseFloat(d.lastPrice).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
-            c[coin] = parseFloat(d.priceChangePercent).toFixed(2)
-          }
-        })
-        setPrices(p); setChanges(c)
-      } catch {}
-    }
-    fetchPrices()
-    const iv = setInterval(fetchPrices, 5000)
-    return () => clearInterval(iv)
-  }, [agent.id])
-
-  // Run paper trade scan
+  // Run paper trade scan — passes cached prices to API so it doesn't need to fetch again
   async function runTradeScan() {
     if (!tradingRef.current) return
     const t = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
-    setLog(prev => [{ color:'blue', label:'Scanning', time:t, msg:'Analysing market conditions...', reason:'Fetching live prices, RSI, MACD data for all monitored coins.' }, ...prev])
+    setLog(prev => [{ color:'blue', label:'Scanning', time:t, msg:'Analysing market conditions...', reason:'Reading from central price hub, calculating RSI + MACD.' }, ...prev])
 
     try {
+      const cachedPrices = getRawPrices()
+
       const res  = await fetch('/api/trade', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          agentId:         agent.id,
-          userId:          user.id,
+          agentId:          agent.id,
+          userId:           user.id,
           coins,
-          prompt:          agentPrompt,
-          riskSettings:    agent.risk_settings,
+          prompt:           agentPrompt,
+          riskSettings:     agent.risk_settings,
           behaviorSettings: agent.behavior_settings,
-          portfolioValue:  agent.portfolio_value,
+          portfolioValue:   agent.portfolio_value,
           openPositions,
+          cachedPrices,
         })
       })
       const data = await res.json()
@@ -216,7 +200,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         }, ...prev])
       }
 
-      // Refresh trades
       const { data: newTrades } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
       setTrades(newTrades || [])
       setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
@@ -226,18 +209,18 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       setLog(prev => [{ color:'red', label:'Error', time:now, msg:'Scan failed', reason:err.message }, ...prev])
     }
 
-    setNextScanIn(30)
+    setNextScanIn(60)
   }
 
   function startTrading() {
     tradingRef.current = true
     setTrading(true)
-    setNextScanIn(30)
+    setNextScanIn(60)
     runTradeScan()
-    intervalRef.current  = setInterval(runTradeScan, 30000)
+    intervalRef.current  = setInterval(runTradeScan, 60000)
     countdownRef.current = setInterval(() => setNextScanIn(n => Math.max(0, n - 1)), 1000)
     const t = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
-    setLog(prev => [{ color:'green', label:'Trading started', time:t, msg:'Paper trading engine active. Using fake tokens — no real money involved.', reason:`Agent will scan markets every 30 seconds and make trading decisions based on live data. Portfolio starts at $${agent.portfolio_value?.toLocaleString()}.` }, ...prev])
+    setLog(prev => [{ color:'green', label:'Trading started', time:t, msg:'Paper trading engine active. Using fake tokens — no real money involved.', reason:`Scanning every 60 seconds using live price data from central hub. Portfolio starts at $${agent.portfolio_value?.toLocaleString()}.` }, ...prev])
   }
 
   function stopTrading() {
@@ -277,7 +260,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const ret = parseFloat(agent.total_return || 0)
   const portfolioValue = agent.portfolio_value || 10000
   const totalPnL = openPositions.reduce((sum, pos) => {
-    const currentPrice = parseFloat((prices[pos.coin]||'0').replace(/,/g,''))
+    const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,''))
     if (!currentPrice) return sum
     return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
   }, 0)
@@ -353,7 +336,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                   </span>
                 </div>
               </div>
-              <div className="text-lg font-semibold text-gray-900">${prices[c]||'...'}</div>
+              <div className="text-lg font-semibold text-gray-900">{prices[c] ? `$${prices[c]}` : '...'}</div>
               {hasPos && <div className="text-xs text-emerald-600 mt-0.5 font-medium">● Position open</div>}
             </div>
           )
@@ -383,7 +366,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <div className="text-sm font-semibold text-gray-900 mb-3">Open positions</div>
               {openPositions.map((pos, i) => {
-                const currentPrice = parseFloat((prices[pos.coin]||'0').replace(/,/g,'')) || pos.entry_price
+                const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || pos.entry_price
                 const pnl = (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
                 const pnlPct = ((pnl / (pos.entry_price * pos.amount)) * 100).toFixed(2)
                 return (
@@ -413,7 +396,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
               <span className="text-sm font-semibold text-gray-900">Agent thought log</span>
               <div className="flex items-center gap-2">
                 {trading && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"/>}
-                <span className="text-xs text-gray-400">{trading ? `scanning every 30s` : 'idle'}</span>
+                <span className="text-xs text-gray-400">{trading ? `scanning every 60s` : 'idle'}</span>
               </div>
             </div>
             <div className="flex flex-col gap-0 max-h-72 overflow-y-auto">

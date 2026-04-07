@@ -17,17 +17,23 @@ const COINGECKO_IDS = {
   MEME:  'solana',
 }
 
-async function fetchPrices(coins) {
-  const prices = {}
+// Module-level cache — fallback if frontend doesn't send prices
+let serverPriceCache = {}
+let serverCacheTime  = 0
+
+async function fetchPricesFromCoinGecko(coins) {
+  const now = Date.now()
+  if (Object.keys(serverPriceCache).length && now - serverCacheTime < 60000) {
+    return serverPriceCache
+  }
   try {
     const uniqueCoins = [...new Set(coins.filter(c => COINGECKO_IDS[c]))]
     const ids = [...new Set(uniqueCoins.map(c => COINGECKO_IDS[c]))].join(',')
-    const res = await fetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_high_24hr=true&include_low_24hr=true`,
-      { headers: { 'Accept': 'application/json' } }
+    const res  = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_high_24hr=true&include_low_24hr=true`
     )
     const data = await res.json()
-    console.log('coingecko response:', JSON.stringify(data).slice(0, 500))
+    const prices = {}
     for (const coin of uniqueCoins) {
       const id = COINGECKO_IDS[coin]
       if (data[id]) {
@@ -40,27 +46,23 @@ async function fetchPrices(coins) {
         }
       }
     }
+    serverPriceCache = prices
+    serverCacheTime  = now
+    return prices
   } catch (e) {
     console.error('fetchPrices error:', e)
+    return serverPriceCache
   }
-  return prices
 }
 
 async function fetchKlines(coinId, days=14) {
   try {
     const res  = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`,
-      { headers: { 'Accept': 'application/json' } }
+      `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`
     )
     const data = await res.json()
     if (!Array.isArray(data)) return []
-    return data.map(d => ({
-      open:   d[1],
-      high:   d[2],
-      low:    d[3],
-      close:  d[4],
-      volume: 0,
-    }))
+    return data.map(d => ({ open:d[1], high:d[2], low:d[3], close:d[4], volume:0 }))
   } catch { return [] }
 }
 
@@ -92,14 +94,18 @@ function calcMACD(closes) {
 
 export async function POST(req) {
   try {
-    const { agentId, userId, coins, prompt, riskSettings, behaviorSettings, portfolioValue, openPositions } = await req.json()
+    const { agentId, userId, coins, prompt, riskSettings, behaviorSettings, portfolioValue, openPositions, cachedPrices } = await req.json()
 
     if (!agentId || !userId) return Response.json({ error: 'Missing agentId or userId' }, { status: 400 })
 
-    const prices   = await fetchPrices(coins)
-    console.log('prices fetched:', JSON.stringify(prices))
-    const analysis = {}
+    // Use prices from frontend cache if available, otherwise fetch
+    const prices = (cachedPrices && Object.keys(cachedPrices).length > 0)
+      ? cachedPrices
+      : await fetchPricesFromCoinGecko(coins)
 
+    console.log('prices used:', JSON.stringify(prices))
+
+    const analysis = {}
     for (const coin of coins) {
       if (!prices[coin]) continue
       const coinId = COINGECKO_IDS[coin]
@@ -125,7 +131,7 @@ ${coin}/USDT:
   24h High: $${data.high24h} | Low: $${data.low24h}
   RSI(14): ${data.rsi}
   MACD: ${data.macd.macd} | Signal: ${data.macd.signal} | Hist: ${data.macd.histogram}
-  Recent candles (1h): ${data.recentCandles || 'unavailable'}
+  Recent candles: ${data.recentCandles || 'unavailable'}
 `).join('\n')
 
     const openPositionsContext = openPositions?.length > 0
@@ -144,8 +150,6 @@ Risk parameters:
 - Take-profit ratio: ${risk.takeProfitRatio || 3}x
 - Trading hours: ${risk.tradingHours || 'always'}
 - Aggressiveness: ${behavior.aggressiveness || 'balanced'}
-- Learn from losses: ${behavior.learnFromLosses ? 'yes' : 'no'}
-- Auto-reduce on drawdown: ${behavior.autoReduceDrawdown ? 'yes' : 'no'}
 
 Current portfolio value: $${portfolioValue} (fake tokens)
 ${openPositionsContext}
@@ -158,11 +162,7 @@ You MUST respond ONLY with a valid JSON object in this exact format:
   "reasoning": "plain English explanation of your decision",
   "confidence": 1-10,
   "indicators_used": ["RSI", "MACD", etc]
-}
-
-action must be one of: BUY (open long), SELL (open short), CLOSE (close existing position), HOLD (do nothing)
-amount_pct is the percentage of portfolio to allocate (0 if HOLD)
-Only trade if you have genuine conviction. Explain your reasoning clearly.`
+}`
 
     const response = await anthropic.messages.create({
       model:      'claude-sonnet-4-20250514',
@@ -181,86 +181,38 @@ Only trade if you have genuine conviction. Explain your reasoning clearly.`
     }
 
     if (decision.action === 'HOLD' || !decision.coin) {
-      return Response.json({
-        action:     'HOLD',
-        reasoning:  decision.reasoning,
-        confidence: decision.confidence,
-        marketData: analysis,
-        tradeId:    null,
-      })
+      return Response.json({ action:'HOLD', reasoning:decision.reasoning, confidence:decision.confidence, marketData:analysis, tradeId:null })
     }
 
     const coinPrice = analysis[decision.coin]?.price
-    if (!coinPrice) return Response.json({ action:'HOLD', reasoning:'Price unavailable', marketData: analysis })
+    if (!coinPrice) return Response.json({ action:'HOLD', reasoning:'Price unavailable', marketData:analysis })
 
-    const maxRiskPct    = risk.maxRiskPerTrade || 2
-    const allocationPct = Math.min(decision.amount_pct || maxRiskPct, risk.maxSingleAsset || 30)
+    const allocationPct = Math.min(decision.amount_pct || risk.maxRiskPerTrade || 2, risk.maxSingleAsset || 30)
     const allocationUsd = (portfolioValue * allocationPct) / 100
     const units         = allocationUsd / coinPrice
 
     let tradeRecord = null
 
     if (decision.action === 'CLOSE') {
-      const { data: openTrade } = await supabase
-        .from('trades')
-        .select('*')
-        .eq('agent_id', agentId)
-        .eq('coin', decision.coin)
-        .eq('status', 'open')
-        .single()
-
+      const { data: openTrade } = await supabase.from('trades').select('*').eq('agent_id', agentId).eq('coin', decision.coin).eq('status', 'open').single()
       if (openTrade) {
         const pnl = (coinPrice - openTrade.entry_price) * openTrade.amount * (openTrade.type === 'BUY' ? 1 : -1)
-        await supabase.from('trades').update({
-          exit_price: coinPrice,
-          pnl,
-          status:    'closed',
-          closed_at: new Date().toISOString(),
-        }).eq('id', openTrade.id)
-
+        await supabase.from('trades').update({ exit_price:coinPrice, pnl, status:'closed', closed_at:new Date().toISOString() }).eq('id', openTrade.id)
         const newPortfolioValue = portfolioValue + pnl
         const { data: allTrades } = await supabase.from('trades').select('pnl').eq('agent_id', agentId).eq('status', 'closed')
-        const wins    = (allTrades || []).filter(t => t.pnl > 0).length
-        const total   = (allTrades || []).length
-        const winRate = total > 0 ? Math.round((wins / total) * 100) : 0
-        const totalRet = ((newPortfolioValue - 10000) / 10000) * 100
-        const maxDD    = Math.min(0, totalRet)
-
-        await supabase.from('agents').update({
-          portfolio_value: newPortfolioValue,
-          total_return:    parseFloat(totalRet.toFixed(2)),
-          win_rate:        winRate,
-          max_drawdown:    parseFloat(Math.abs(maxDD).toFixed(2)),
-        }).eq('id', agentId)
-
-        tradeRecord = { ...openTrade, exit_price: coinPrice, pnl, status: 'closed' }
+        const wins    = (allTrades||[]).filter(t=>t.pnl>0).length
+        const total   = (allTrades||[]).length
+        const winRate = total > 0 ? Math.round((wins/total)*100) : 0
+        const totalRet = ((newPortfolioValue-10000)/10000)*100
+        await supabase.from('agents').update({ portfolio_value:newPortfolioValue, total_return:parseFloat(totalRet.toFixed(2)), win_rate:winRate, max_drawdown:parseFloat(Math.abs(Math.min(0,totalRet)).toFixed(2)) }).eq('id', agentId)
+        tradeRecord = { ...openTrade, exit_price:coinPrice, pnl, status:'closed' }
       }
     } else {
-      const { data: newTrade } = await supabase.from('trades').insert({
-        agent_id:    agentId,
-        user_id:     userId,
-        coin:        decision.coin,
-        type:        decision.action,
-        entry_price: coinPrice,
-        amount:      parseFloat(units.toFixed(6)),
-        status:      'open',
-        reasoning:   decision.reasoning,
-      }).select().single()
-
+      const { data: newTrade } = await supabase.from('trades').insert({ agent_id:agentId, user_id:userId, coin:decision.coin, type:decision.action, entry_price:coinPrice, amount:parseFloat(units.toFixed(6)), status:'open', reasoning:decision.reasoning }).select().single()
       tradeRecord = newTrade
     }
 
-    return Response.json({
-      action:     decision.action,
-      coin:       decision.coin,
-      price:      coinPrice,
-      amount:     units,
-      reasoning:  decision.reasoning,
-      confidence: decision.confidence,
-      indicators: decision.indicators_used,
-      marketData: analysis,
-      trade:      tradeRecord,
-    })
+    return Response.json({ action:decision.action, coin:decision.coin, price:coinPrice, amount:units, reasoning:decision.reasoning, confidence:decision.confidence, indicators:decision.indicators_used, marketData:analysis, trade:tradeRecord })
 
   } catch (err) {
     console.error('Trade API error:', err)

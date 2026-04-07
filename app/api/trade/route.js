@@ -25,6 +25,7 @@ async function fetchPrices(coins) {
       const symbol = COIN_SYMBOLS[coin]
       const res = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`)
       const d   = await res.json()
+      console.log(`binance response for ${coin}:`, JSON.stringify(d).slice(0, 200))
       if (d && d.symbol) {
         prices[coin] = {
           price:     parseFloat(d.lastPrice),

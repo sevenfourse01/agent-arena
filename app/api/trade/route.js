@@ -17,15 +17,6 @@ const COINGECKO_IDS = {
   MEME:  'solana',
 }
 
-const COIN_SYMBOLS = {
-  BTC:   'BTCUSDT',
-  ETH:   'ETHUSDT',
-  SOL:   'SOLUSDT',
-  BNB:   'BNBUSDT',
-  AGENT: 'SOLUSDT',
-  MEME:  'SOLUSDT',
-}
-
 async function fetchPrices(coins) {
   const prices = {}
   try {
@@ -55,17 +46,20 @@ async function fetchPrices(coins) {
   return prices
 }
 
-async function fetchKlines(symbol, interval='1h', limit=24) {
+async function fetchKlines(coinId, days=2) {
   try {
-    const res  = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`)
+    const res  = await fetch(
+      `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`,
+      { headers: { 'Accept': 'application/json' } }
+    )
     const data = await res.json()
     if (!Array.isArray(data)) return []
     return data.map(d => ({
-      open:   parseFloat(d[1]),
-      high:   parseFloat(d[2]),
-      low:    parseFloat(d[3]),
-      close:  parseFloat(d[4]),
-      volume: parseFloat(d[5]),
+      open:   d[1],
+      high:   d[2],
+      low:    d[3],
+      close:  d[4],
+      volume: 0,
     }))
   } catch { return [] }
 }
@@ -108,8 +102,8 @@ export async function POST(req) {
 
     for (const coin of coins) {
       if (!prices[coin]) continue
-      const symbol = COIN_SYMBOLS[coin]
-      const klines = symbol ? await fetchKlines(symbol) : []
+      const coinId = COINGECKO_IDS[coin]
+      const klines = coinId ? await fetchKlines(coinId) : []
       const closes = klines.map(k => k.close)
       analysis[coin] = {
         ...prices[coin],

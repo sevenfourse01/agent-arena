@@ -46,7 +46,7 @@ async function fetchPrices(coins) {
   return prices
 }
 
-async function fetchKlines(coinId, days=2) {
+async function fetchKlines(coinId, days=14) {
   try {
     const res  = await fetch(
       `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`,

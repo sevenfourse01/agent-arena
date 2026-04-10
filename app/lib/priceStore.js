@@ -1,22 +1,30 @@
 // Central price store — fetches once every 10s, all agents read from it
 
 const COINGECKO_IDS = {
-  BTC: 'bitcoin',
-  ETH: 'ethereum',
-  SOL: 'solana',
-  BNB: 'binancecoin',
+  BTC:   'bitcoin',
+  ETH:   'ethereum',
+  SOL:   'solana',
+  BNB:   'binancecoin',
+  AVAX:  'avalanche-2',
+  MATIC: 'matic-network',
+  DOGE:  'dogecoin',
+  SHIB:  'shiba-inu',
+  PEPE:  'pepe',
+  WIF:   'dogwifcoin',
+  BONK:  'bonk',
+  FLOKI: 'floki',
   AGENT: 'solana',
-  MEME: 'solana',
+  MEME:  'solana',
 }
 
 const ALL_IDS = [...new Set(Object.values(COINGECKO_IDS))].join(',')
 
 let store = {
-  prices:    {},  // { BTC: '68,123.45', ETH: '2,103.00', ... }
-  changes:   {},  // { BTC: '-0.55', ETH: '-1.42', ... }
-  raw:       {},  // { BTC: { price, change24h, high24h, low24h, volume }, ... }
+  prices:     {},
+  changes:    {},
+  raw:        {},
   lastUpdate: null,
-  listeners: new Set(),
+  listeners:  new Set(),
 }
 
 let fetchInterval = null
@@ -39,7 +47,11 @@ async function fetchAll() {
         const c = data[id].usd_24h_change || 0
         prices[coin]  = p >= 1000
           ? p.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-          : p.toFixed(p >= 1 ? 2 : 4)
+          : p >= 1
+          ? p.toFixed(2)
+          : p >= 0.01
+          ? p.toFixed(4)
+          : p.toFixed(8)
         changes[coin] = c.toFixed(2)
         raw[coin] = {
           price:     p,
@@ -51,9 +63,9 @@ async function fetchAll() {
       }
     }
 
-    store.prices    = prices
-    store.changes   = changes
-    store.raw       = raw
+    store.prices     = prices
+    store.changes    = changes
+    store.raw        = raw
     store.lastUpdate = Date.now()
     notify()
   } catch (e) {

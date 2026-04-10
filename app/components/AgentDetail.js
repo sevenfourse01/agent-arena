@@ -25,13 +25,39 @@ const typeColors = {
   green:   'bg-green-50 text-green-800',
 }
 
-const COIN_MAP = { BTC:'BTCUSDT', ETH:'ETHUSDT', SOL:'SOLUSDT', BNB:'BNBUSDT', AGENT:'SOLUSDT', MEME:'SOLUSDT' }
+const COIN_MAP = {
+  BTC: 'BTCUSDT', ETH: 'ETHUSDT', SOL: 'SOLUSDT', BNB: 'BNBUSDT',
+  AVAX: 'AVAXUSDT', MATIC: 'MATICUSDT',
+  DOGE: 'DOGEUSDT', SHIB: 'SHIBUSDT', PEPE: 'PEPEUSDT',
+  WIF: 'WIFUSDT', BONK: 'BONKUSDT', FLOKI: 'FLOKIUSDT',
+  AGENT: 'SOLUSDT', MEME: 'SOLUSDT',
+}
+
+const ALL_COINS = {
+  'Major Crypto': [
+    { id:'BTC',   label:'Bitcoin',   icon:'₿'  },
+    { id:'ETH',   label:'Ethereum',  icon:'Ξ'  },
+    { id:'SOL',   label:'Solana',    icon:'◎'  },
+    { id:'BNB',   label:'BNB',       icon:'⬡'  },
+    { id:'AVAX',  label:'Avalanche', icon:'▲'  },
+    { id:'MATIC', label:'Polygon',   icon:'⬟'  },
+  ],
+  'Meme Coins': [
+    { id:'DOGE',  label:'Dogecoin',  icon:'🐕' },
+    { id:'SHIB',  label:'Shiba Inu', icon:'🐕‍🦺' },
+    { id:'PEPE',  label:'Pepe',      icon:'🐸' },
+    { id:'WIF',   label:'dogwifhat', icon:'🎩' },
+    { id:'BONK',  label:'Bonk',      icon:'🔨' },
+    { id:'FLOKI', label:'Floki',     icon:'⚡' },
+  ],
+}
 
 function formatPrice(n) {
   if (!n && n !== 0) return '...'
-  if (n >= 1000) return '$' + n.toLocaleString('en-US', { minimumFractionDigits:0, maximumFractionDigits:0 })
-  if (n >= 1)    return '$' + n.toFixed(2)
-  return '$' + n.toFixed(4)
+  if (n >= 1000)  return '$' + n.toLocaleString('en-US', { minimumFractionDigits:0, maximumFractionDigits:0 })
+  if (n >= 1)     return '$' + n.toFixed(2)
+  if (n >= 0.01)  return '$' + n.toFixed(4)
+  return '$' + n.toFixed(8)
 }
 
 function MiniChart({ symbol, tf }) {
@@ -99,43 +125,45 @@ function MiniChart({ symbol, tf }) {
 }
 
 export default function AgentDetail({ agent: initialAgent, user, onBack }) {
-  const [agent, setAgent]         = useState(initialAgent)
-  const [log, setLog]             = useState([{
+  const [agent, setAgent]               = useState(initialAgent)
+  const [log, setLog]                   = useState([{
     color:'blue', label:'Initialised', time: new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'}),
     msg:'Agent ready. Press "Start trading" to begin paper trading with fake tokens.',
     reason:'All systems operational. Will scan markets and make trading decisions every 60 seconds.'
   }])
-  const [trades, setTrades]       = useState([])
+  const [trades, setTrades]             = useState([])
   const [openPositions, setOpenPositions] = useState([])
-  const [prompt_, setPrompt]      = useState('')
-  const [loading, setLoading]     = useState(false)
-  const [trading, setTrading]     = useState(false)
-  const [tf, setTf]               = useState(TIMEFRAMES[1])
+  const [prompt_, setPrompt]            = useState('')
+  const [loading, setLoading]           = useState(false)
+  const [trading, setTrading]           = useState(false)
+  const [tf, setTf]                     = useState(TIMEFRAMES[1])
   const [selectedCoin, setSelectedCoin] = useState(null)
-  const [prices, setPrices]       = useState({})
-  const [changes, setChanges]     = useState({})
-  const [saving, setSaving]       = useState(false)
-  const [saveMsg, setSaveMsg]     = useState('')
-  const [agentPrompt, setAgentPrompt] = useState(agent.prompt || '')
-  const [nextScanIn, setNextScanIn]   = useState(60)
-  const tradingRef  = useRef(false)
-  const intervalRef = useRef(null)
+  const [prices, setPrices]             = useState({})
+  const [changes, setChanges]           = useState({})
+  const [saving, setSaving]             = useState(false)
+  const [saveMsg, setSaveMsg]           = useState('')
+  const [agentPrompt, setAgentPrompt]   = useState(agent.prompt || '')
+  const [nextScanIn, setNextScanIn]     = useState(60)
+  const [showCoinEditor, setShowCoinEditor] = useState(false)
+  const [editCoins, setEditCoins]       = useState([])
+  const [savingCoins, setSavingCoins]   = useState(false)
+  const tradingRef   = useRef(false)
+  const intervalRef  = useRef(null)
   const countdownRef = useRef(null)
 
-  const coins = Array.isArray(agent.coins) ? agent.coins.filter(c => COIN_MAP[c]) : ['BTC']
+  const coins      = Array.isArray(agent.coins) ? agent.coins : ['BTC']
   const activeCoin = selectedCoin || coins[0] || 'BTC'
 
   // Start central price store
   useEffect(() => {
     startPriceStore()
     const unsub = subscribePrices(({ prices: p, changes: c }) => {
-      setPrices(p)
-      setChanges(c)
+      setPrices(p); setChanges(c)
     })
     return () => { unsub(); stopPriceStore() }
   }, [])
 
-  // Load trades from Supabase
+  // Load trades
   useEffect(() => {
     async function loadTrades() {
       const { data } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
@@ -145,7 +173,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     loadTrades()
   }, [agent.id])
 
-  // Run paper trade scan — passes cached prices to API so it doesn't need to fetch again
+  // Run paper trade scan
   async function runTradeScan() {
     if (!tradingRef.current) return
     const t = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
@@ -153,7 +181,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
 
     try {
       const cachedPrices = getRawPrices()
-
       const res  = await fetch('/api/trade', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -173,42 +200,34 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       const now  = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
 
       if (data.error || !data.action) {
-        setLog(prev => [{ color:'red', label:'Error', time:t, msg:'Trade scan failed — check API key and agent settings', reason: data.error || 'No response from trading engine' }, ...prev])
+        setLog(prev => [{ color:'red', label:'Error', time:t, msg:'Trade scan failed', reason: data.error || 'No response from trading engine' }, ...prev])
         return
       }
 
       if (data.action === 'HOLD') {
-        setLog(prev => [{ color:'amber', label:'Hold', time:now, msg:`No trade — holding position.`, reason:data.reasoning }, ...prev])
+        setLog(prev => [{ color:'amber', label:'Hold', time:now, msg:'No trade — holding position.', reason:data.reasoning }, ...prev])
       } else if (data.action === 'CLOSE') {
         const pnl = data.trade?.pnl || 0
-        setLog(prev => [{
-          color: pnl >= 0 ? 'emerald' : 'red',
-          label: 'Position closed',
-          time:  now,
-          msg:   `Closed ${data.coin} position at ${formatPrice(data.price)} — PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
-          reason: data.reasoning
-        }, ...prev])
+        setLog(prev => [{ color: pnl >= 0 ? 'emerald' : 'red', label:'Position closed', time:now,
+          msg:`Closed ${data.coin} position at ${formatPrice(data.price)} — PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
+          reason:data.reasoning }, ...prev])
         const { data: updatedAgent } = await supabase.from('agents').select('*').eq('id', agent.id).single()
         if (updatedAgent) setAgent(updatedAgent)
       } else {
-        setLog(prev => [{
-          color:  data.action === 'BUY' ? 'emerald' : 'red',
-          label:  `${data.action} executed`,
-          time:   now,
-          msg:    `${data.action} ${data.coin} at ${formatPrice(data.price)} — ${data.amount?.toFixed(4)} units · Confidence: ${data.confidence}/10`,
-          reason: data.reasoning
-        }, ...prev])
+        setLog(prev => [{ color: data.action === 'BUY' ? 'emerald' : 'red', label:`${data.action} executed`, time:now,
+          msg:`${data.action} ${data.coin} at ${formatPrice(data.price)} — ${data.amount?.toFixed(4)} units · Confidence: ${data.confidence}/10`,
+          reason:data.reasoning }, ...prev])
+        const { data: updatedAgent } = await supabase.from('agents').select('*').eq('id', agent.id).single()
+        if (updatedAgent) setAgent(updatedAgent)
       }
 
       const { data: newTrades } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
       setTrades(newTrades || [])
       setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
-
     } catch (err) {
       const now = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
       setLog(prev => [{ color:'red', label:'Error', time:now, msg:'Scan failed', reason:err.message }, ...prev])
     }
-
     setNextScanIn(60)
   }
 
@@ -220,7 +239,8 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     intervalRef.current  = setInterval(runTradeScan, 60000)
     countdownRef.current = setInterval(() => setNextScanIn(n => Math.max(0, n - 1)), 1000)
     const t = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
-    setLog(prev => [{ color:'green', label:'Trading started', time:t, msg:'Paper trading engine active. Using fake tokens — no real money involved.', reason:`Scanning every 60 seconds using live price data from central hub. Portfolio starts at $${agent.portfolio_value?.toLocaleString()}.` }, ...prev])
+    setLog(prev => [{ color:'green', label:'Trading started', time:t, msg:'Paper trading engine active. Using fake tokens — no real money involved.',
+      reason:`Scanning every 60 seconds. Portfolio: $${agent.portfolio_value?.toLocaleString()}.` }, ...prev])
   }
 
   function stopTrading() {
@@ -246,6 +266,14 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     setSaving(false); setSaveMsg('✓ Saved!'); setTimeout(()=>setSaveMsg(''), 2500)
   }
 
+  async function saveCoins() {
+    setSavingCoins(true)
+    await supabase.from('agents').update({ coins: editCoins }).eq('id', agent.id)
+    setAgent(a => ({ ...a, coins: editCoins }))
+    setSavingCoins(false)
+    setShowCoinEditor(false)
+  }
+
   async function sendManualPrompt() {
     if (!prompt_.trim() || loading) return
     setLoading(true)
@@ -257,8 +285,11 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     setLoading(false)
   }
 
-  const ret = parseFloat(agent.total_return || 0)
+  const ret          = parseFloat(agent.total_return || 0)
   const portfolioValue = agent.portfolio_value || 10000
+  const cashBalance  = parseFloat(agent.cash_balance ?? portfolioValue)
+  const investedVal  = parseFloat(agent.invested_value ?? 0)
+
   const totalPnL = openPositions.reduce((sum, pos) => {
     const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,''))
     if (!currentPrice) return sum
@@ -270,6 +301,55 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       <button onClick={onBack} className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 mb-4 transition-colors">
         ← Back to all agents
       </button>
+
+      {/* Coin editor modal */}
+      {showCoinEditor && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-sm font-bold text-gray-900">Edit traded coins</span>
+              <button onClick={() => setShowCoinEditor(false)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+            </div>
+            {Object.entries(ALL_COINS).map(([category, coinList]) => (
+              <div key={category} className="mb-4">
+                <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 pb-1 border-b border-gray-100">{category}</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {coinList.map(coin => {
+                    const sel = editCoins.includes(coin.id)
+                    const price = prices[coin.id]
+                    const change = changes[coin.id]
+                    const isPos = parseFloat(change || 0) >= 0
+                    return (
+                      <button key={coin.id} onClick={() => setEditCoins(prev => sel ? prev.filter(c => c !== coin.id) : [...prev, coin.id])}
+                        className={`rounded-xl p-3 border text-left transition-all ${sel ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200 bg-gray-50 hover:border-gray-300'}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-base">{coin.icon}</span>
+                          {sel && <span className="text-emerald-500 text-xs font-bold">✓</span>}
+                        </div>
+                        <div className="text-xs font-bold text-gray-900">{coin.id}</div>
+                        <div className="text-xs text-gray-400">{coin.label}</div>
+                        {price && (
+                          <div className="mt-1">
+                            <div className="text-xs font-semibold text-gray-700">${price}</div>
+                            <div className={`text-xs ${isPos ? 'text-emerald-600' : 'text-red-500'}`}>{isPos?'+':''}{change}%</div>
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+            <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100">
+              <button onClick={() => setShowCoinEditor(false)} className="flex-1 border border-gray-200 text-gray-600 text-sm py-2 rounded-xl hover:bg-gray-50">Cancel</button>
+              <button onClick={saveCoins} disabled={savingCoins || editCoins.length === 0}
+                className="flex-1 bg-emerald-500 text-white text-sm font-semibold py-2 rounded-xl hover:bg-emerald-600 disabled:opacity-50">
+                {savingCoins ? 'Saving...' : `Save (${editCoins.length} coins)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Agent header */}
       <div className="flex items-center justify-between mb-4">
@@ -303,13 +383,13 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — cash/invested split */}
       <div className="grid grid-cols-4 gap-3 mb-4">
         {[
-          ['Portfolio value', `$${portfolioValue.toLocaleString()}`, 'fake tokens', ''],
-          ['Total return',    `${ret>=0?'+':''}${ret.toFixed(1)}%`,  'since start',  ret>=0?'text-emerald-600':'text-red-500'],
-          ['Win rate',        `${agent.win_rate||0}%`,               'closed trades',''],
-          ['Open PnL',        `${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)}`, 'unrealised', totalPnL>=0?'text-emerald-600':'text-red-500'],
+          ['Cash',         `$${cashBalance.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'available to trade', ''],
+          ['Invested',     `$${investedVal.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'in open positions', investedVal > 0 ? 'text-emerald-600' : ''],
+          ['Total return', `${ret>=0?'+':''}${ret.toFixed(1)}%`, 'since start', ret>=0?'text-emerald-600':'text-red-500'],
+          ['Open PnL',     `${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)}`, 'unrealised', totalPnL>=0?'text-emerald-600':'text-red-500'],
         ].map(([l,v,s,c])=>(
           <div key={l} className="bg-gray-100 rounded-lg p-3">
             <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">{l}</div>
@@ -319,10 +399,17 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         ))}
       </div>
 
-      {/* Coin cards */}
+      {/* Coin cards + edit button */}
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-gray-500">Monitored coins</span>
+        <button onClick={() => { setEditCoins([...coins]); setShowCoinEditor(true) }}
+          className="text-xs text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1">
+          ✏️ Edit coins
+        </button>
+      </div>
       <div className="grid grid-cols-4 gap-3 mb-4">
         {coins.map(c => {
-          const isPos = parseFloat(changes[c]||0) >= 0
+          const isPos  = parseFloat(changes[c]||0) >= 0
           const hasPos = openPositions.find(p => p.coin === c)
           return (
             <div key={c} onClick={()=>setSelectedCoin(c)}
@@ -379,9 +466,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className={`text-sm font-bold ${pnl>=0?'text-emerald-600':'text-red-500'}`}>
-                        {pnl>=0?'+':''}{formatPrice(Math.abs(pnl))}
-                      </div>
+                      <div className={`text-sm font-bold ${pnl>=0?'text-emerald-600':'text-red-500'}`}>{pnl>=0?'+':''}{formatPrice(Math.abs(pnl))}</div>
                       <div className={`text-xs ${pnl>=0?'text-emerald-500':'text-red-400'}`}>{pnl>=0?'+':''}{pnlPct}%</div>
                     </div>
                   </div>
@@ -396,7 +481,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
               <span className="text-sm font-semibold text-gray-900">Agent thought log</span>
               <div className="flex items-center gap-2">
                 {trading && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"/>}
-                <span className="text-xs text-gray-400">{trading ? `scanning every 60s` : 'idle'}</span>
+                <span className="text-xs text-gray-400">{trading ? 'scanning every 60s' : 'idle'}</span>
               </div>
             </div>
             <div className="flex flex-col gap-0 max-h-72 overflow-y-auto">
@@ -477,19 +562,50 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-3">Risk settings</div>
             {[
-              ['Max risk/trade', `${agent.risk_settings?.maxRiskPerTrade||2}%`],
-              ['Max drawdown',   `${agent.risk_settings?.maxDrawdown||10}%`],
-              ['Max exposure',   `${agent.risk_settings?.maxExposure||70}%`],
-              ['Max single asset',`${agent.risk_settings?.maxSingleAsset||30}%`],
-              ['Take-profit',    `${agent.risk_settings?.takeProfitRatio||3}x`],
-              ['Trading hours',  agent.risk_settings?.tradingHours||'24/7'],
-              ['Aggressiveness', agent.behavior_settings?.aggressiveness||'balanced'],
+              ['Max risk/trade',   `${agent.risk_settings?.maxRiskPerTrade||2}%`],
+              ['Max drawdown',     `${agent.risk_settings?.maxDrawdown||10}%`],
+              ['Max exposure',     `${agent.risk_settings?.maxExposure||70}%`],
+              ['Max single asset', `${agent.risk_settings?.maxSingleAsset||30}%`],
+              ['Take-profit',      `${agent.risk_settings?.takeProfitRatio||3}x`],
+              ['Trading hours',    agent.risk_settings?.tradingHours||'24/7'],
+              ['Aggressiveness',   agent.behavior_settings?.aggressiveness||'balanced'],
             ].map(([l,v])=>(
               <div key={l} className="flex justify-between items-center py-1.5 border-b border-gray-100 last:border-0">
                 <span className="text-xs text-gray-500">{l}</span>
                 <span className="text-xs font-semibold text-gray-900 capitalize">{v}</span>
               </div>
             ))}
+          </div>
+
+          {/* Portfolio breakdown */}
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <div className="text-sm font-semibold text-gray-900 mb-3">Portfolio</div>
+            <div className="flex justify-between text-xs mb-1.5">
+              <span className="text-gray-500">Cash</span>
+              <span className="font-semibold text-gray-900">${cashBalance.toLocaleString('en-US',{maximumFractionDigits:0})}</span>
+            </div>
+            <div className="flex justify-between text-xs mb-2">
+              <span className="text-gray-500">Invested</span>
+              <span className="font-semibold text-emerald-600">${investedVal.toLocaleString('en-US',{maximumFractionDigits:0})}</span>
+            </div>
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-1.5">
+              <div className="h-full flex">
+                {(() => {
+                  const total = cashBalance + investedVal || 1
+                  return <>
+                    <div style={{width:`${(cashBalance/total*100).toFixed(1)}%`}} className="bg-gray-300"/>
+                    <div style={{width:`${(investedVal/total*100).toFixed(1)}%`}} className="bg-emerald-500"/>
+                  </>
+                })()}
+              </div>
+            </div>
+            <div className="flex justify-between text-xs text-gray-400">
+              <span>Cash</span><span>Invested</span>
+            </div>
+            <div className="mt-2 pt-2 border-t border-gray-100 flex justify-between text-xs">
+              <span className="text-gray-500">Win rate</span>
+              <span className="font-semibold text-gray-900">{agent.win_rate||0}%</span>
+            </div>
           </div>
 
           {/* Wallet */}

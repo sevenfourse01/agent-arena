@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@supabase/supabase-js'
-import { startPriceStore, stopPriceStore, subscribePrices, getRawPrices } from '@/lib/priceStore'
+import { startPriceStore, stopPriceStore, subscribePrices, getRawPrices } from '@/app/lib/priceStore'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,

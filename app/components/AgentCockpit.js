@@ -12,15 +12,27 @@ const COIN_COLORS = {
   ETH:   'bg-blue-100 text-blue-700',
   SOL:   'bg-purple-100 text-purple-700',
   BNB:   'bg-yellow-100 text-yellow-700',
+  AVAX:  'bg-red-100 text-red-700',
+  MATIC: 'bg-violet-100 text-violet-700',
+  DOGE:  'bg-amber-100 text-amber-800',
+  SHIB:  'bg-red-100 text-red-800',
+  PEPE:  'bg-green-100 text-green-800',
+  WIF:   'bg-purple-100 text-purple-800',
+  BONK:  'bg-orange-100 text-orange-800',
+  FLOKI: 'bg-yellow-100 text-yellow-800',
   AGENT: 'bg-emerald-100 text-emerald-700',
   MEME:  'bg-green-100 text-green-700',
 }
 
 function AgentCard({ agent, onClick }) {
-  const ret    = parseFloat(agent.total_return || 0)
-  const isPos  = ret >= 0
-  const coins  = Array.isArray(agent.coins) ? agent.coins : []
-  const status = agent.status || 'active'
+  const ret         = parseFloat(agent.total_return || 0)
+  const isPos       = ret >= 0
+  const coins       = Array.isArray(agent.coins) ? agent.coins : []
+  const cash        = parseFloat(agent.cash_balance ?? agent.portfolio_value ?? 10000)
+  const invested    = parseFloat(agent.invested_value ?? 0)
+  const total       = cash + invested
+  const cashPct     = total > 0 ? Math.round((cash / total) * 100) : 100
+  const investedPct = 100 - cashPct
 
   return (
     <div onClick={onClick}
@@ -34,21 +46,19 @@ function AgentCard({ agent, onClick }) {
           <div>
             <div className="text-sm font-bold text-gray-900">{agent.name}</div>
             <div className="text-xs text-gray-400 mt-0.5">
-              {agent.is_copy ? `📋 Copied · ${agent.copied_from}` : '🤖 Your agent'}
+              {agent.is_copy ? '📋 Copied agent' : '🤖 Your agent'}
             </div>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${status==='active'?'bg-emerald-50 text-emerald-700':'bg-gray-100 text-gray-500'}`}>
-            {status==='active'?'● Active':'○ Paused'}
-          </span>
-        </div>
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${agent.status==='active'?'bg-emerald-50 text-emerald-700':'bg-gray-100 text-gray-500'}`}>
+          {agent.status==='active'?'● Active':'○ Paused'}
+        </span>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-2 mb-3">
+      {/* Return + Win rate */}
+      <div className="grid grid-cols-2 gap-2 mb-3">
         <div className="bg-gray-50 rounded-lg p-2 text-center">
-          <div className="text-xs text-gray-400 mb-0.5">Return</div>
+          <div className="text-xs text-gray-400 mb-0.5">Total return</div>
           <div className={`text-sm font-bold ${isPos?'text-emerald-600':'text-red-500'}`}>
             {isPos?'+':''}{ret.toFixed(1)}%
           </div>
@@ -57,9 +67,22 @@ function AgentCard({ agent, onClick }) {
           <div className="text-xs text-gray-400 mb-0.5">Win rate</div>
           <div className="text-sm font-bold text-gray-900">{agent.win_rate || 0}%</div>
         </div>
-        <div className="bg-gray-50 rounded-lg p-2 text-center">
-          <div className="text-xs text-gray-400 mb-0.5">Value</div>
-          <div className="text-sm font-bold text-gray-900">${(agent.portfolio_value||10000).toLocaleString()}</div>
+      </div>
+
+      {/* Portfolio split */}
+      <div className="mb-3">
+        <div className="flex justify-between text-xs text-gray-400 mb-1">
+          <span>Cash <span className="font-semibold text-gray-700">${cash.toLocaleString('en-US', {maximumFractionDigits:0})}</span></span>
+          <span>Invested <span className="font-semibold text-emerald-600">${invested.toLocaleString('en-US', {maximumFractionDigits:0})}</span></span>
+        </div>
+        <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-full flex">
+            <div style={{ width:`${cashPct}%` }} className="bg-gray-300 transition-all"/>
+            <div style={{ width:`${investedPct}%` }} className="bg-emerald-500 transition-all"/>
+          </div>
+        </div>
+        <div className="flex justify-between text-xs text-gray-300 mt-0.5">
+          <span>Total: ${total.toLocaleString('en-US', {maximumFractionDigits:0})}</span>
         </div>
       </div>
 
@@ -92,12 +115,11 @@ export default function AgentCockpit({ user, onSelectAgent, onCreateAgent }) {
     load()
   }, [user])
 
-  const filtered = agents.filter(a => a.name?.toLowerCase().includes(search.toLowerCase()))
+  const filtered  = agents.filter(a => a.name?.toLowerCase().includes(search.toLowerCase()))
   const freeSlots = Math.max(0, 3 - agents.filter(a => !a.is_copy).length)
 
   return (
     <div>
-      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-bold text-gray-900">My Agents</h1>
@@ -105,14 +127,12 @@ export default function AgentCockpit({ user, onSelectAgent, onCreateAgent }) {
             {agents.length} agent{agents.length!==1?'s':''} · {freeSlots} free slot{freeSlots!==1?'s':''} remaining
           </p>
         </div>
-        <button onClick={onCreateAgent}
-          disabled={freeSlots === 0}
+        <button onClick={onCreateAgent} disabled={freeSlots === 0}
           className="flex items-center gap-2 bg-gray-900 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
           <span className="text-lg leading-none">+</span> Launch new agent
         </button>
       </div>
 
-      {/* Search */}
       <div className="relative mb-4">
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search your agents..."
@@ -120,7 +140,6 @@ export default function AgentCockpit({ user, onSelectAgent, onCreateAgent }) {
         <span className="absolute left-3.5 top-3.5 text-gray-400 text-sm">🔍</span>
       </div>
 
-      {/* Free slots banner */}
       {freeSlots > 0 && agents.length === 0 && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6 text-center mb-6">
           <div className="text-3xl mb-3">🤖</div>
@@ -133,7 +152,6 @@ export default function AgentCockpit({ user, onSelectAgent, onCreateAgent }) {
         </div>
       )}
 
-      {/* Loading */}
       {loading && (
         <div className="grid grid-cols-3 gap-4">
           {[1,2,3].map(i => (
@@ -142,20 +160,19 @@ export default function AgentCockpit({ user, onSelectAgent, onCreateAgent }) {
                 <div className="w-10 h-10 rounded-full bg-gray-200"/>
                 <div className="flex-1"><div className="h-3 bg-gray-200 rounded mb-1"/><div className="h-2 bg-gray-100 rounded w-2/3"/></div>
               </div>
-              <div className="grid grid-cols-3 gap-2 mb-3">{[1,2,3].map(j=><div key={j} className="h-12 bg-gray-100 rounded-lg"/>)}</div>
+              <div className="grid grid-cols-2 gap-2 mb-3">{[1,2].map(j=><div key={j} className="h-12 bg-gray-100 rounded-lg"/>)}</div>
+              <div className="h-4 bg-gray-100 rounded mb-3"/>
               <div className="flex gap-1">{[1,2].map(j=><div key={j} className="h-5 w-12 bg-gray-100 rounded-full"/>)}</div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Agent grid */}
       {!loading && filtered.length > 0 && (
         <div className="grid grid-cols-3 gap-4">
           {filtered.map(agent => (
             <AgentCard key={agent.id} agent={agent} onClick={() => onSelectAgent(agent)}/>
           ))}
-          {/* Empty slot cards */}
           {Array.from({ length: freeSlots }).map((_, i) => (
             <button key={`slot-${i}`} onClick={onCreateAgent}
               className="bg-white border-2 border-dashed border-gray-200 rounded-xl p-4 cursor-pointer hover:border-emerald-300 hover:bg-emerald-50 transition-all flex flex-col items-center justify-center min-h-[180px] gap-2">
@@ -167,12 +184,10 @@ export default function AgentCockpit({ user, onSelectAgent, onCreateAgent }) {
         </div>
       )}
 
-      {/* No results */}
       {!loading && agents.length > 0 && filtered.length === 0 && (
         <div className="text-center py-12 text-sm text-gray-400">No agents matching "{search}"</div>
       )}
 
-      {/* Free slots info */}
       {freeSlots === 0 && (
         <div className="mt-6 bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
           <div className="text-sm font-semibold text-amber-800 mb-1">All 3 free slots used</div>

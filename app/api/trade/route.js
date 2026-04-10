@@ -13,11 +13,19 @@ const COINGECKO_IDS = {
   ETH:   'ethereum',
   SOL:   'solana',
   BNB:   'binancecoin',
+  AVAX:  'avalanche-2',
+  MATIC: 'matic-network',
+  DOGE:  'dogecoin',
+  SHIB:  'shiba-inu',
+  PEPE:  'pepe',
+  WIF:   'dogwifcoin',
+  BONK:  'bonk',
+  FLOKI: 'floki',
   AGENT: 'solana',
   MEME:  'solana',
 }
 
-// Module-level cache — fallback if frontend doesn't send prices
+// Server-side price cache
 let serverPriceCache = {}
 let serverCacheTime  = 0
 
@@ -66,6 +74,33 @@ async function fetchKlines(coinId, days=14) {
   } catch { return [] }
 }
 
+async function fetchSentiment(behaviorSettings) {
+  const signals = []
+  try {
+    // Fear & Greed Index
+    if (behaviorSettings?.useFearGreed !== false) {
+      const res  = await fetch('https://api.alternative.me/fng/?limit=1')
+      const data = await res.json()
+      if (data?.data?.[0]) {
+        const { value, value_classification } = data.data[0]
+        signals.push(`Fear & Greed Index: ${value}/100 (${value_classification})`)
+      }
+    }
+    // Crypto news via CryptoPanic (public feed, no key needed)
+    if (behaviorSettings?.useNewsSentiment) {
+      const res  = await fetch('https://cryptopanic.com/api/v1/posts/?auth_token=public&kind=news&public=true')
+      const data = await res.json()
+      if (data?.results?.length) {
+        const headlines = data.results.slice(0, 5).map(r => r.title).join(' | ')
+        signals.push(`Recent crypto headlines: ${headlines}`)
+      }
+    }
+  } catch (e) {
+    console.error('Sentiment fetch error:', e)
+  }
+  return signals.length > 0 ? signals.join('\n') : null
+}
+
 function calcRSI(closes, period=14) {
   if (closes.length < period + 1) return 50
   let gains = 0, losses = 0
@@ -76,8 +111,7 @@ function calcRSI(closes, period=14) {
   const avgGain = gains / period
   const avgLoss = losses / period
   if (avgLoss === 0) return 100
-  const rs = avgGain / avgLoss
-  return parseFloat((100 - 100 / (1 + rs)).toFixed(2))
+  return parseFloat((100 - 100 / (1 + avgGain / avgLoss)).toFixed(2))
 }
 
 function calcMACD(closes) {
@@ -98,12 +132,10 @@ export async function POST(req) {
 
     if (!agentId || !userId) return Response.json({ error: 'Missing agentId or userId' }, { status: 400 })
 
-    // Use prices from frontend cache if available, otherwise fetch
+    // Use frontend cached prices or fetch fresh
     const prices = (cachedPrices && Object.keys(cachedPrices).length > 0)
       ? cachedPrices
       : await fetchPricesFromCoinGecko(coins)
-
-    console.log('prices used:', JSON.stringify(prices))
 
     const analysis = {}
     for (const coin of coins) {
@@ -119,7 +151,8 @@ export async function POST(req) {
       }
     }
 
-    console.log('analysis keys:', Object.keys(analysis))
+    // Fetch sentiment signals
+    const sentimentContext = await fetchSentiment(behaviorSettings)
 
     const risk     = riskSettings || {}
     const behavior = behaviorSettings || {}
@@ -135,31 +168,31 @@ ${coin}/USDT:
 `).join('\n')
 
     const openPositionsContext = openPositions?.length > 0
-      ? `\nCurrent open positions:\n${openPositions.map(p => `  ${p.coin} ${p.type}: entry $${p.entry_price}, size ${p.amount} units, unrealised PnL: $${((analysis[p.coin]?.price || p.entry_price) - p.entry_price) * p.amount * (p.type==='BUY'?1:-1)}`).join('\n')}`
-      : '\nNo open positions currently.'
+      ? `\nOpen positions:\n${openPositions.map(p => `  ${p.coin} ${p.type}: entry $${p.entry_price}, size ${p.amount} units`).join('\n')}`
+      : '\nNo open positions.'
 
-    const systemPrompt = `You are an autonomous AI paper trading agent. You analyse real market data and make trading decisions using FAKE tokens for training purposes. No real money is involved.
+    const systemPrompt = `You are an autonomous AI paper trading agent. You analyse real market data and make trading decisions using FAKE tokens. No real money is involved.
 
-Your strategy: ${prompt || 'Momentum and technical analysis based trading'}
+Strategy: ${prompt || 'Momentum and technical analysis based trading'}
 
 Risk parameters:
-- Max risk per trade: ${risk.maxRiskPerTrade || 2}% of portfolio
+- Max risk per trade: ${risk.maxRiskPerTrade || 2}%
 - Max drawdown: ${risk.maxDrawdown || 10}%
-- Max portfolio exposure: ${risk.maxExposure || 70}%
+- Max exposure: ${risk.maxExposure || 70}%
 - Max single asset: ${risk.maxSingleAsset || 30}%
 - Take-profit ratio: ${risk.takeProfitRatio || 3}x
-- Trading hours: ${risk.tradingHours || 'always'}
 - Aggressiveness: ${behavior.aggressiveness || 'balanced'}
 
-Current portfolio value: $${portfolioValue} (fake tokens)
+Portfolio: $${portfolioValue} total (fake tokens)
 ${openPositionsContext}
+${sentimentContext ? `\nSentiment signals:\n${sentimentContext}` : ''}
 
-You MUST respond ONLY with a valid JSON object in this exact format:
+Respond ONLY with valid JSON:
 {
   "action": "BUY" | "SELL" | "CLOSE" | "HOLD",
-  "coin": "BTC" | "ETH" | "SOL" | "BNB" | "AGENT" | "MEME" | null,
+  "coin": "BTC" | "ETH" | "SOL" | "BNB" | "AVAX" | "MATIC" | "DOGE" | "SHIB" | "PEPE" | "WIF" | "BONK" | "FLOKI" | null,
   "amount_pct": 0-100,
-  "reasoning": "plain English explanation of your decision",
+  "reasoning": "plain English explanation",
   "confidence": 1-10,
   "indicators_used": ["RSI", "MACD", etc]
 }`
@@ -167,7 +200,7 @@ You MUST respond ONLY with a valid JSON object in this exact format:
     const response = await anthropic.messages.create({
       model:      'claude-sonnet-4-20250514',
       max_tokens: 500,
-      messages:   [{ role: 'user', content: `Current market data:\n${marketContext}\n\nAnalyse and decide.` }],
+      messages:   [{ role: 'user', content: `Market data:\n${marketContext}\n\nAnalyse and decide.` }],
       system:     systemPrompt,
     })
 
@@ -187,32 +220,93 @@ You MUST respond ONLY with a valid JSON object in this exact format:
     const coinPrice = analysis[decision.coin]?.price
     if (!coinPrice) return Response.json({ action:'HOLD', reasoning:'Price unavailable', marketData:analysis })
 
+    // Fetch current agent to get latest cash/invested
+    const { data: currentAgent } = await supabase.from('agents').select('cash_balance, invested_value, portfolio_value').eq('id', agentId).single()
+    const cashBalance   = parseFloat(currentAgent?.cash_balance ?? portfolioValue ?? 10000)
+    const investedValue = parseFloat(currentAgent?.invested_value ?? 0)
+
     const allocationPct = Math.min(decision.amount_pct || risk.maxRiskPerTrade || 2, risk.maxSingleAsset || 30)
-    const allocationUsd = (portfolioValue * allocationPct) / 100
+    const allocationUsd = (cashBalance * allocationPct) / 100
     const units         = allocationUsd / coinPrice
 
     let tradeRecord = null
 
     if (decision.action === 'CLOSE') {
       const { data: openTrade } = await supabase.from('trades').select('*').eq('agent_id', agentId).eq('coin', decision.coin).eq('status', 'open').single()
+
       if (openTrade) {
         const pnl = (coinPrice - openTrade.entry_price) * openTrade.amount * (openTrade.type === 'BUY' ? 1 : -1)
-        await supabase.from('trades').update({ exit_price:coinPrice, pnl, status:'closed', closed_at:new Date().toISOString() }).eq('id', openTrade.id)
-        const newPortfolioValue = portfolioValue + pnl
+        const tradeValue = openTrade.entry_price * openTrade.amount
+
+        await supabase.from('trades').update({
+          exit_price: coinPrice, pnl, status: 'closed', closed_at: new Date().toISOString()
+        }).eq('id', openTrade.id)
+
+        // Return invested value back to cash + add PnL
+        const newCash     = cashBalance + tradeValue + pnl
+        const newInvested = Math.max(0, investedValue - tradeValue)
+        const newTotal    = newCash + newInvested
+
         const { data: allTrades } = await supabase.from('trades').select('pnl').eq('agent_id', agentId).eq('status', 'closed')
         const wins    = (allTrades||[]).filter(t=>t.pnl>0).length
         const total   = (allTrades||[]).length
         const winRate = total > 0 ? Math.round((wins/total)*100) : 0
-        const totalRet = ((newPortfolioValue-10000)/10000)*100
-        await supabase.from('agents').update({ portfolio_value:newPortfolioValue, total_return:parseFloat(totalRet.toFixed(2)), win_rate:winRate, max_drawdown:parseFloat(Math.abs(Math.min(0,totalRet)).toFixed(2)) }).eq('id', agentId)
-        tradeRecord = { ...openTrade, exit_price:coinPrice, pnl, status:'closed' }
+        const totalRet = ((newTotal - 10000) / 10000) * 100
+
+        await supabase.from('agents').update({
+          portfolio_value: newTotal,
+          cash_balance:    newCash,
+          invested_value:  newInvested,
+          total_return:    parseFloat(totalRet.toFixed(2)),
+          win_rate:        winRate,
+          max_drawdown:    parseFloat(Math.abs(Math.min(0, totalRet)).toFixed(2)),
+        }).eq('id', agentId)
+
+        tradeRecord = { ...openTrade, exit_price: coinPrice, pnl, status: 'closed' }
       }
-    } else {
-      const { data: newTrade } = await supabase.from('trades').insert({ agent_id:agentId, user_id:userId, coin:decision.coin, type:decision.action, entry_price:coinPrice, amount:parseFloat(units.toFixed(6)), status:'open', reasoning:decision.reasoning }).select().single()
+    } else if (decision.action === 'BUY' || decision.action === 'SELL') {
+      if (allocationUsd > cashBalance) {
+        return Response.json({ action:'HOLD', reasoning:'Insufficient cash balance for this trade', marketData:analysis })
+      }
+
+      const { data: newTrade } = await supabase.from('trades').insert({
+        agent_id:    agentId,
+        user_id:     userId,
+        coin:        decision.coin,
+        type:        decision.action,
+        entry_price: coinPrice,
+        amount:      parseFloat(units.toFixed(6)),
+        status:      'open',
+        reasoning:   decision.reasoning,
+      }).select().single()
+
+      // Deduct from cash, add to invested
+      const newCash     = cashBalance - allocationUsd
+      const newInvested = investedValue + allocationUsd
+      const newTotal    = newCash + newInvested
+      const totalRet    = ((newTotal - 10000) / 10000) * 100
+
+      await supabase.from('agents').update({
+        portfolio_value: newTotal,
+        cash_balance:    newCash,
+        invested_value:  newInvested,
+        total_return:    parseFloat(totalRet.toFixed(2)),
+      }).eq('id', agentId)
+
       tradeRecord = newTrade
     }
 
-    return Response.json({ action:decision.action, coin:decision.coin, price:coinPrice, amount:units, reasoning:decision.reasoning, confidence:decision.confidence, indicators:decision.indicators_used, marketData:analysis, trade:tradeRecord })
+    return Response.json({
+      action:     decision.action,
+      coin:       decision.coin,
+      price:      coinPrice,
+      amount:     units,
+      reasoning:  decision.reasoning,
+      confidence: decision.confidence,
+      indicators: decision.indicators_used,
+      marketData: analysis,
+      trade:      tradeRecord,
+    })
 
   } catch (err) {
     console.error('Trade API error:', err)

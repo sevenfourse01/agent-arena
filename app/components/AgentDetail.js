@@ -153,6 +153,9 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [editCoins, setEditCoins]       = useState([])
   const [savingCoins, setSavingCoins]   = useState(false)
   const [coinSearch, setCoinSearch]     = useState('')
+  const [caResult, setCaResult]         = useState(null)
+  const [caLoading, setCaLoading]       = useState(false)
+  const [caError, setCaError]           = useState('')
   const tradingRef   = useRef(false)
   const intervalRef  = useRef(null)
   const countdownRef = useRef(null)
@@ -257,7 +260,31 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     setSavingCoins(true)
     await supabase.from('agents').update({ coins: editCoins }).eq('id', agent.id)
     setAgent(a => ({ ...a, coins: editCoins }))
-    setSavingCoins(false); setShowCoinEditor(false); setCoinSearch('')
+    setSavingCoins(false); setShowCoinEditor(false); setCoinSearch(''); setCaResult(null); setCaError('')
+  }
+
+  const isCA = (s) => s.length > 20
+
+  async function searchCA(val) {
+    if (!isCA(val)) return
+    setCaLoading(true); setCaResult(null); setCaError('')
+    try {
+      const res  = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${val}`)
+      const data = await res.json()
+      const pair = data?.pairs?.[0]
+      if (!pair) { setCaError('No token found for this address'); setCaLoading(false); return }
+      setCaResult({
+        id:       pair.baseToken.symbol.toUpperCase(),
+        label:    pair.baseToken.name,
+        ca:       val,
+        price:    parseFloat(pair.priceUsd || 0),
+        change24h:parseFloat(pair.priceChange?.h24 || 0),
+        chain:    pair.chainId,
+        dex:      pair.dexId,
+        icon:     '🔍',
+      })
+    } catch { setCaError('Failed to fetch token data') }
+    setCaLoading(false)
   }
 
   async function sendManualPrompt() {
@@ -281,8 +308,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
   }, 0)
 
-  // Filtered coins for search
-  const searchedCoins = coinSearch.trim()
+  const filteredCoins = coinSearch.trim() && !isCA(coinSearch)
     ? ALL_COINS_FLAT.filter(c =>
         c.id.toLowerCase().includes(coinSearch.toLowerCase()) ||
         c.label.toLowerCase().includes(coinSearch.toLowerCase())
@@ -325,48 +351,97 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-bold text-gray-900">Edit traded coins</span>
-              <button onClick={() => { setShowCoinEditor(false); setCoinSearch('') }} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+              <button onClick={() => { setShowCoinEditor(false); setCoinSearch(''); setCaResult(null); setCaError('') }} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
             </div>
 
-            {/* Search */}
-            <div className="relative mb-4">
+            {/* Search / CA input */}
+            <div className="relative mb-3">
               <input
                 value={coinSearch}
-                onChange={e => setCoinSearch(e.target.value)}
-                placeholder="Search coins..."
+                onChange={e => {
+                  const v = e.target.value
+                  setCoinSearch(v); setCaResult(null); setCaError('')
+                  if (isCA(v)) searchCA(v)
+                }}
+                placeholder="Search by name / ticker, or paste a contract address..."
                 className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-emerald-400 pl-9"
               />
               <span className="absolute left-3 top-2.5 text-gray-400 text-sm">🔍</span>
               {coinSearch && (
-                <button onClick={() => setCoinSearch('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 text-xs">✕</button>
+                <button onClick={() => { setCoinSearch(''); setCaResult(null); setCaError('') }}
+                  className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 text-xs">✕</button>
               )}
             </div>
 
+            {/* CA lookup hint */}
+            {coinSearch.length > 5 && coinSearch.length <= 20 && (
+              <p className="text-xs text-gray-400 mb-3">Tip: paste a full contract address to add any token</p>
+            )}
+
             <div className="overflow-y-auto flex-1">
-              {searchedCoins ? (
-                // Search results — flat grid
-                searchedCoins.length > 0 ? (
+              {/* Contract address result */}
+              {isCA(coinSearch) && (
+                <div className="mb-4">
+                  {caLoading && <div className="text-center py-6 text-sm text-gray-400">Looking up token...</div>}
+                  {caError && <div className="text-center py-6 text-sm text-red-500">{caError}</div>}
+                  {caResult && (
+                    <div className="border border-emerald-200 bg-emerald-50 rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <div className="text-sm font-bold text-gray-900">{caResult.label}</div>
+                          <div className="text-xs text-gray-500">{caResult.id} · {caResult.chain} · {caResult.dex}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-bold text-gray-900">${caResult.price < 0.01 ? caResult.price.toFixed(8) : caResult.price.toFixed(4)}</div>
+                          <div className={`text-xs font-medium ${caResult.change24h >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                            {caResult.change24h >= 0 ? '+' : ''}{caResult.change24h.toFixed(2)}% 24h
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-400 font-mono mb-3 break-all">{coinSearch}</div>
+                      {editCoins.includes(caResult.id) ? (
+                        <button onClick={() => setEditCoins(prev => prev.filter(c => c !== caResult.id))}
+                          className="w-full bg-red-50 border border-red-200 text-red-600 text-sm font-medium py-2 rounded-xl hover:bg-red-100">
+                          Remove {caResult.id}
+                        </button>
+                      ) : (
+                        <button onClick={() => setEditCoins(prev => [...prev, caResult.id])}
+                          className="w-full bg-emerald-500 text-white text-sm font-semibold py-2 rounded-xl hover:bg-emerald-600">
+                          Add {caResult.id} to agent
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Filtered search results */}
+              {filteredCoins && !isCA(coinSearch) && (
+                filteredCoins.length > 0 ? (
                   <div className="grid grid-cols-3 gap-2">
-                    {searchedCoins.map(coin => <CoinCard key={coin.id} coin={coin} />)}
+                    {filteredCoins.map(coin => <CoinCard key={coin.id} coin={coin} />)}
                   </div>
                 ) : (
-                  <div className="text-center py-8 text-sm text-gray-400">No coins found for "{coinSearch}"</div>
-                )
-              ) : (
-                // Normal categorised view
-                Object.entries(ALL_COINS).map(([category, coinList]) => (
-                  <div key={category} className="mb-4">
-                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 pb-1 border-b border-gray-100">{category}</div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {coinList.map(coin => <CoinCard key={coin.id} coin={coin} />)}
-                    </div>
+                  <div className="text-center py-8 text-sm text-gray-400">
+                    No coins found for "{coinSearch}"<br/>
+                    <span className="text-xs text-gray-300">Try pasting a contract address instead</span>
                   </div>
-                ))
+                )
               )}
+
+              {/* Default categorised view */}
+              {!coinSearch.trim() && Object.entries(ALL_COINS).map(([category, coinList]) => (
+                <div key={category} className="mb-4">
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 pb-1 border-b border-gray-100">{category}</div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {coinList.map(coin => <CoinCard key={coin.id} coin={coin} />)}
+                  </div>
+                </div>
+              ))}
             </div>
 
             <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100">
-              <button onClick={() => { setShowCoinEditor(false); setCoinSearch('') }}
+              <button onClick={() => { setShowCoinEditor(false); setCoinSearch(''); setCaResult(null); setCaError('') }}
                 className="flex-1 border border-gray-200 text-gray-600 text-sm py-2 rounded-xl hover:bg-gray-50">Cancel</button>
               <button onClick={saveCoins} disabled={savingCoins || editCoins.length === 0}
                 className="flex-1 bg-emerald-500 text-white text-sm font-semibold py-2 rounded-xl hover:bg-emerald-600 disabled:opacity-50">

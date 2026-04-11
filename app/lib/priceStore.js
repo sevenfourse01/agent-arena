@@ -6,7 +6,7 @@ const COINGECKO_IDS = {
   SOL:   'solana',
   BNB:   'binancecoin',
   AVAX:  'avalanche-2',
-  MATIC: 'matic-network',
+  MATIC: 'polygon-ecosystem-token',
   DOGE:  'dogecoin',
   PEPE:  'pepe',
   WIF:   'dogwifcoin',

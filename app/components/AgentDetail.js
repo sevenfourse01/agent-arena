@@ -28,7 +28,7 @@ const typeColors = {
 const COIN_MAP = {
   BTC: 'BTCUSDT', ETH: 'ETHUSDT', SOL: 'SOLUSDT', BNB: 'BNBUSDT',
   AVAX: 'AVAXUSDT', MATIC: 'MATICUSDT',
-  DOGE: 'DOGEUSDT', SHIB: 'SHIBUSDT', PEPE: 'PEPEUSDT',
+  DOGE: 'DOGEUSDT', PEPE: 'PEPEUSDT',
   WIF: 'WIFUSDT', BONK: 'BONKUSDT', FLOKI: 'FLOKIUSDT',
   AGENT: 'SOLUSDT', MEME: 'SOLUSDT',
 }
@@ -43,14 +43,19 @@ const ALL_COINS = {
     { id:'MATIC', label:'Polygon',   icon:'⬟'  },
   ],
   'Meme Coins': [
+    { id:'AGENT', label:'$AGENT',    icon:'⚡' },
     { id:'DOGE',  label:'Dogecoin',  icon:'🐕' },
-    { id:'SHIB',  label:'Shiba Inu', icon:'🐕‍🦺' },
     { id:'PEPE',  label:'Pepe',      icon:'🐸' },
     { id:'WIF',   label:'dogwifhat', icon:'🎩' },
     { id:'BONK',  label:'Bonk',      icon:'🔨' },
-    { id:'FLOKI', label:'Floki',     icon:'⚡' },
+    { id:'FLOKI', label:'Floki',     icon:'🌙' },
   ],
 }
+
+// Flat list for search
+const ALL_COINS_FLAT = Object.entries(ALL_COINS).flatMap(([cat, coins]) =>
+  coins.map(c => ({ ...c, category: cat }))
+)
 
 function formatPrice(n) {
   if (!n && n !== 0) return '...'
@@ -147,6 +152,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [showCoinEditor, setShowCoinEditor] = useState(false)
   const [editCoins, setEditCoins]       = useState([])
   const [savingCoins, setSavingCoins]   = useState(false)
+  const [coinSearch, setCoinSearch]     = useState('')
   const tradingRef   = useRef(false)
   const intervalRef  = useRef(null)
   const countdownRef = useRef(null)
@@ -154,7 +160,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const coins      = Array.isArray(agent.coins) ? agent.coins : ['BTC']
   const activeCoin = selectedCoin || coins[0] || 'BTC'
 
-  // Start central price store
   useEffect(() => {
     startPriceStore()
     const unsub = subscribePrices(({ prices: p, changes: c }) => {
@@ -163,7 +168,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     return () => { unsub(); stopPriceStore() }
   }, [])
 
-  // Load trades
   useEffect(() => {
     async function loadTrades() {
       const { data } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
@@ -173,37 +177,29 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     loadTrades()
   }, [agent.id])
 
-  // Run paper trade scan
   async function runTradeScan() {
     if (!tradingRef.current) return
     const t = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
     setLog(prev => [{ color:'blue', label:'Scanning', time:t, msg:'Analysing market conditions...', reason:'Reading from central price hub, calculating RSI + MACD.' }, ...prev])
-
     try {
       const cachedPrices = getRawPrices()
       const res  = await fetch('/api/trade', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          agentId:          agent.id,
-          userId:           user.id,
-          coins,
-          prompt:           agentPrompt,
-          riskSettings:     agent.risk_settings,
+          agentId: agent.id, userId: user.id, coins,
+          prompt: agentPrompt, riskSettings: agent.risk_settings,
           behaviorSettings: agent.behavior_settings,
-          portfolioValue:   agent.portfolio_value,
-          openPositions,
-          cachedPrices,
+          portfolioValue: agent.portfolio_value,
+          openPositions, cachedPrices,
         })
       })
       const data = await res.json()
       const now  = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
-
       if (data.error || !data.action) {
         setLog(prev => [{ color:'red', label:'Error', time:t, msg:'Trade scan failed', reason: data.error || 'No response from trading engine' }, ...prev])
         return
       }
-
       if (data.action === 'HOLD') {
         setLog(prev => [{ color:'amber', label:'Hold', time:now, msg:'No trade — holding position.', reason:data.reasoning }, ...prev])
       } else if (data.action === 'CLOSE') {
@@ -211,16 +207,15 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         setLog(prev => [{ color: pnl >= 0 ? 'emerald' : 'red', label:'Position closed', time:now,
           msg:`Closed ${data.coin} position at ${formatPrice(data.price)} — PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
           reason:data.reasoning }, ...prev])
-        const { data: updatedAgent } = await supabase.from('agents').select('*').eq('id', agent.id).single()
-        if (updatedAgent) setAgent(updatedAgent)
+        const { data: ua } = await supabase.from('agents').select('*').eq('id', agent.id).single()
+        if (ua) setAgent(ua)
       } else {
         setLog(prev => [{ color: data.action === 'BUY' ? 'emerald' : 'red', label:`${data.action} executed`, time:now,
           msg:`${data.action} ${data.coin} at ${formatPrice(data.price)} — ${data.amount?.toFixed(4)} units · Confidence: ${data.confidence}/10`,
           reason:data.reasoning }, ...prev])
-        const { data: updatedAgent } = await supabase.from('agents').select('*').eq('id', agent.id).single()
-        if (updatedAgent) setAgent(updatedAgent)
+        const { data: ua } = await supabase.from('agents').select('*').eq('id', agent.id).single()
+        if (ua) setAgent(ua)
       }
-
       const { data: newTrades } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
       setTrades(newTrades || [])
       setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
@@ -232,9 +227,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   }
 
   function startTrading() {
-    tradingRef.current = true
-    setTrading(true)
-    setNextScanIn(60)
+    tradingRef.current = true; setTrading(true); setNextScanIn(60)
     runTradeScan()
     intervalRef.current  = setInterval(runTradeScan, 60000)
     countdownRef.current = setInterval(() => setNextScanIn(n => Math.max(0, n - 1)), 1000)
@@ -244,20 +237,14 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   }
 
   function stopTrading() {
-    tradingRef.current = false
-    setTrading(false)
-    clearInterval(intervalRef.current)
-    clearInterval(countdownRef.current)
+    tradingRef.current = false; setTrading(false)
+    clearInterval(intervalRef.current); clearInterval(countdownRef.current)
     const t = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
     setLog(prev => [{ color:'amber', label:'Trading paused', time:t, msg:'Paper trading paused.', reason:'Agent will resume from where it left off when restarted.' }, ...prev])
   }
 
   useEffect(() => {
-    return () => {
-      clearInterval(intervalRef.current)
-      clearInterval(countdownRef.current)
-      tradingRef.current = false
-    }
+    return () => { clearInterval(intervalRef.current); clearInterval(countdownRef.current); tradingRef.current = false }
   }, [])
 
   async function savePromptToDB() {
@@ -270,8 +257,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     setSavingCoins(true)
     await supabase.from('agents').update({ coins: editCoins }).eq('id', agent.id)
     setAgent(a => ({ ...a, coins: editCoins }))
-    setSavingCoins(false)
-    setShowCoinEditor(false)
+    setSavingCoins(false); setShowCoinEditor(false); setCoinSearch('')
   }
 
   async function sendManualPrompt() {
@@ -289,12 +275,43 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const portfolioValue = agent.portfolio_value || 10000
   const cashBalance  = parseFloat(agent.cash_balance ?? portfolioValue)
   const investedVal  = parseFloat(agent.invested_value ?? 0)
-
   const totalPnL = openPositions.reduce((sum, pos) => {
     const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,''))
     if (!currentPrice) return sum
     return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
   }, 0)
+
+  // Filtered coins for search
+  const searchedCoins = coinSearch.trim()
+    ? ALL_COINS_FLAT.filter(c =>
+        c.id.toLowerCase().includes(coinSearch.toLowerCase()) ||
+        c.label.toLowerCase().includes(coinSearch.toLowerCase())
+      )
+    : null
+
+  function CoinCard({ coin }) {
+    const sel    = editCoins.includes(coin.id)
+    const price  = prices[coin.id]
+    const change = changes[coin.id]
+    const isPos  = parseFloat(change || 0) >= 0
+    return (
+      <button onClick={() => setEditCoins(prev => sel ? prev.filter(c => c !== coin.id) : [...prev, coin.id])}
+        className={`rounded-xl p-3 border text-left transition-all ${sel ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200 bg-gray-50 hover:border-gray-300'}`}>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-base">{coin.icon}</span>
+          {sel && <span className="text-emerald-500 text-xs font-bold">✓</span>}
+        </div>
+        <div className="text-xs font-bold text-gray-900">{coin.id}</div>
+        <div className="text-xs text-gray-400">{coin.label}</div>
+        {price && (
+          <div className="mt-1">
+            <div className="text-xs font-semibold text-gray-700">${price}</div>
+            <div className={`text-xs ${isPos ? 'text-emerald-600' : 'text-red-500'}`}>{isPos?'+':''}{change}%</div>
+          </div>
+        )}
+      </button>
+    )
+  }
 
   return (
     <div>
@@ -305,46 +322,55 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       {/* Coin editor modal */}
       {showCoinEditor && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
-            <div className="flex items-center justify-between mb-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-bold text-gray-900">Edit traded coins</span>
-              <button onClick={() => setShowCoinEditor(false)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+              <button onClick={() => { setShowCoinEditor(false); setCoinSearch('') }} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
             </div>
-            {Object.entries(ALL_COINS).map(([category, coinList]) => (
-              <div key={category} className="mb-4">
-                <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 pb-1 border-b border-gray-100">{category}</div>
-                <div className="grid grid-cols-3 gap-2">
-                  {coinList.map(coin => {
-                    const sel = editCoins.includes(coin.id)
-                    const price = prices[coin.id]
-                    const change = changes[coin.id]
-                    const isPos = parseFloat(change || 0) >= 0
-                    return (
-                      <button key={coin.id} onClick={() => setEditCoins(prev => sel ? prev.filter(c => c !== coin.id) : [...prev, coin.id])}
-                        className={`rounded-xl p-3 border text-left transition-all ${sel ? 'border-emerald-400 bg-emerald-50' : 'border-gray-200 bg-gray-50 hover:border-gray-300'}`}>
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="text-base">{coin.icon}</span>
-                          {sel && <span className="text-emerald-500 text-xs font-bold">✓</span>}
-                        </div>
-                        <div className="text-xs font-bold text-gray-900">{coin.id}</div>
-                        <div className="text-xs text-gray-400">{coin.label}</div>
-                        {price && (
-                          <div className="mt-1">
-                            <div className="text-xs font-semibold text-gray-700">${price}</div>
-                            <div className={`text-xs ${isPos ? 'text-emerald-600' : 'text-red-500'}`}>{isPos?'+':''}{change}%</div>
-                          </div>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            ))}
+
+            {/* Search */}
+            <div className="relative mb-4">
+              <input
+                value={coinSearch}
+                onChange={e => setCoinSearch(e.target.value)}
+                placeholder="Search coins..."
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-emerald-400 pl-9"
+              />
+              <span className="absolute left-3 top-2.5 text-gray-400 text-sm">🔍</span>
+              {coinSearch && (
+                <button onClick={() => setCoinSearch('')} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 text-xs">✕</button>
+              )}
+            </div>
+
+            <div className="overflow-y-auto flex-1">
+              {searchedCoins ? (
+                // Search results — flat grid
+                searchedCoins.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {searchedCoins.map(coin => <CoinCard key={coin.id} coin={coin} />)}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-sm text-gray-400">No coins found for "{coinSearch}"</div>
+                )
+              ) : (
+                // Normal categorised view
+                Object.entries(ALL_COINS).map(([category, coinList]) => (
+                  <div key={category} className="mb-4">
+                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 pb-1 border-b border-gray-100">{category}</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {coinList.map(coin => <CoinCard key={coin.id} coin={coin} />)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
             <div className="flex gap-2 mt-4 pt-4 border-t border-gray-100">
-              <button onClick={() => setShowCoinEditor(false)} className="flex-1 border border-gray-200 text-gray-600 text-sm py-2 rounded-xl hover:bg-gray-50">Cancel</button>
+              <button onClick={() => { setShowCoinEditor(false); setCoinSearch('') }}
+                className="flex-1 border border-gray-200 text-gray-600 text-sm py-2 rounded-xl hover:bg-gray-50">Cancel</button>
               <button onClick={saveCoins} disabled={savingCoins || editCoins.length === 0}
                 className="flex-1 bg-emerald-500 text-white text-sm font-semibold py-2 rounded-xl hover:bg-emerald-600 disabled:opacity-50">
-                {savingCoins ? 'Saving...' : `Save (${editCoins.length} coins)`}
+                {savingCoins ? 'Saving...' : `Save (${editCoins.length} coin${editCoins.length !== 1 ? 's' : ''})`}
               </button>
             </div>
           </div>
@@ -370,20 +396,18 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         </div>
         <div className="flex gap-2">
           {!trading ? (
-            <button onClick={startTrading}
-              className="flex items-center gap-2 bg-emerald-500 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-emerald-600 transition-colors">
+            <button onClick={startTrading} className="flex items-center gap-2 bg-emerald-500 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-emerald-600 transition-colors">
               ▶ Start trading
             </button>
           ) : (
-            <button onClick={stopTrading}
-              className="flex items-center gap-2 bg-red-500 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-red-600 transition-colors">
+            <button onClick={stopTrading} className="flex items-center gap-2 bg-red-500 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-red-600 transition-colors">
               ⏸ Pause
             </button>
           )}
         </div>
       </div>
 
-      {/* Stats — cash/invested split */}
+      {/* Stats */}
       <div className="grid grid-cols-4 gap-3 mb-4">
         {[
           ['Cash',         `$${cashBalance.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'available to trade', ''],
@@ -399,7 +423,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         ))}
       </div>
 
-      {/* Coin cards + edit button */}
+      {/* Coin cards */}
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-medium text-gray-500">Monitored coins</span>
         <button onClick={() => { setEditCoins([...coins]); setShowCoinEditor(true) }}
@@ -544,7 +568,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
 
         {/* Right column */}
         <div className="flex flex-col gap-4">
-          {/* Agent prompt */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-gray-900">Agent prompt</span>
@@ -558,7 +581,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </button>
           </div>
 
-          {/* Risk settings */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-3">Risk settings</div>
             {[
@@ -577,7 +599,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             ))}
           </div>
 
-          {/* Portfolio breakdown */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-3">Portfolio</div>
             <div className="flex justify-between text-xs mb-1.5">
@@ -599,16 +620,13 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                 })()}
               </div>
             </div>
-            <div className="flex justify-between text-xs text-gray-400">
-              <span>Cash</span><span>Invested</span>
-            </div>
-            <div className="mt-2 pt-2 border-t border-gray-100 flex justify-between text-xs">
+            <div className="flex justify-between text-xs text-gray-400 mb-2"><span>Cash</span><span>Invested</span></div>
+            <div className="flex justify-between text-xs pt-2 border-t border-gray-100">
               <span className="text-gray-500">Win rate</span>
               <span className="font-semibold text-gray-900">{agent.win_rate||0}%</span>
             </div>
           </div>
 
-          {/* Wallet */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-2">Agent wallet</div>
             <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between mb-2">

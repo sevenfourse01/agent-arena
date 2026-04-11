@@ -157,6 +157,8 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [caLoading, setCaLoading]       = useState(false)
   const [caError, setCaError]           = useState('')
   const [customCoinCas, setCustomCoinCas] = useState(agent.custom_coin_cas || {})
+  const [forumSettings, setForumSettings]   = useState(agent.forum_settings || { reddit:false, fourchan:false, cryptopanic:false })
+  const [savingForums, setSavingForums]     = useState(false)
   const tradingRef   = useRef(false)
   const intervalRef  = useRef(null)
   const countdownRef = useRef(null)
@@ -202,7 +204,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
           prompt: agentPrompt, riskSettings: agent.risk_settings,
           behaviorSettings: agent.behavior_settings,
           portfolioValue: agent.portfolio_value,
-          openPositions, cachedPrices,
+          openPositions, cachedPrices, forumSettings,
         })
       })
       const data = await res.json()
@@ -279,6 +281,14 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     setCustomCoinCas(updatedCas)
     setAgent(a => ({ ...a, coins: editCoins, custom_coin_cas: updatedCas }))
     setSavingCoins(false); setShowCoinEditor(false); setCoinSearch(''); setCaResult(null); setCaError('')
+  }
+
+  async function saveForumSettings(newSettings) {
+    setSavingForums(true)
+    await supabase.from('agents').update({ forum_settings: newSettings }).eq('id', agent.id)
+    setForumSettings(newSettings)
+    setAgent(a => ({ ...a, forum_settings: newSettings }))
+    setSavingForums(false)
   }
 
   const isCA = (s) => s.length > 20
@@ -737,6 +747,30 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
               <span className="text-gray-500">Win rate</span>
               <span className="font-semibold text-gray-900">{agent.win_rate||0}%</span>
             </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <div className="text-sm font-semibold text-gray-900 mb-1">Information sources</div>
+            <p className="text-xs text-gray-400 mb-3">Enable social feeds your agent reads before every trade decision.</p>
+            {[
+              ['reddit',      '🔴', 'Reddit',       'r/CryptoMoonShots, r/memecoin, r/SatoshiStreetBets'],
+              ['fourchan',    '🟩', '4chan /biz/',   'Anonymous early sentiment — noisy but often first'],
+              ['cryptopanic', '📰', 'CryptoPanic',  'Aggregated crypto news from 50+ sources'],
+            ].map(([key, icon, label, desc]) => (
+              <div key={key}
+                onClick={() => { const next = { ...forumSettings, [key]: !forumSettings[key] }; saveForumSettings(next) }}
+                className={`flex items-center gap-3 py-2.5 border-b border-gray-100 last:border-0 cursor-pointer group`}>
+                <span className="text-base">{icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-gray-900">{label}</div>
+                  <div className="text-xs text-gray-400 truncate">{desc}</div>
+                </div>
+                <div className={`w-8 h-4 rounded-full relative flex-shrink-0 transition-colors ${forumSettings[key] ? 'bg-emerald-500' : 'bg-gray-200'}`}>
+                  <div className={`w-3 h-3 rounded-full bg-white absolute top-0.5 transition-all ${forumSettings[key] ? 'left-4' : 'left-0.5'}`}/>
+                </div>
+              </div>
+            ))}
+            {savingForums && <p className="text-xs text-emerald-500 mt-2">Saved ✓</p>}
           </div>
 
           <div className="bg-white border border-gray-200 rounded-xl p-4">

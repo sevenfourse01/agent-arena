@@ -397,6 +397,22 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             )}
 
             <div className="overflow-y-auto flex-1">
+              {/* Currently active coins — always shown, always removable */}
+              {!coinSearch.trim() && editCoins.length > 0 && (
+                <div className="mb-4">
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 pb-1 border-b border-gray-100">Currently active</div>
+                  <div className="flex flex-wrap gap-2">
+                    {editCoins.map(c => (
+                      <div key={c} className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 rounded-full px-3 py-1.5">
+                        <span className="text-xs font-bold text-emerald-800">{c}</span>
+                        <button onClick={() => setEditCoins(prev => prev.filter(x => x !== c))}
+                          className="text-emerald-400 hover:text-red-500 text-xs font-bold leading-none ml-1">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Contract address result */}
               {isCA(coinSearch) && (
                 <div className="mb-4">

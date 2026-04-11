@@ -6,7 +6,7 @@ const COINGECKO_IDS = {
   SOL:   'solana',
   BNB:   'binancecoin',
   AVAX:  'avalanche-2',
-  MATIC: 'pol-ex-matic',
+  MATIC: 'matic-network',
   DOGE:  'dogecoin',
   PEPE:  'pepe',
   WIF:   'dogwifcoin',
@@ -15,8 +15,11 @@ const COINGECKO_IDS = {
   MEME:  'solana',
 }
 
-// $AGENT CA on Solana — swap this out for the real CA at launch
+// $AGENT CA — swap for real CA at launch
 const AGENT_CA = 'PLACEHOLDER_AGENT_CA'
+
+// Custom CAs registered by agents: { symbol: ca }
+let customCAs = {}
 
 const ALL_IDS = [...new Set(Object.values(COINGECKO_IDS))].join(',')
 
@@ -42,13 +45,9 @@ function fmtPrice(p) {
   return p.toFixed(8)
 }
 
-async function fetchAgentPrice() {
+async function fetchDexScreener(ca) {
   try {
-    if (AGENT_CA === 'PLACEHOLDER_AGENT_CA') {
-      // Use SOL price as placeholder until real CA is set
-      return null
-    }
-    const res  = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${AGENT_CA}`)
+    const res  = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`)
     const data = await res.json()
     const pair = data?.pairs?.[0]
     if (!pair) return null
@@ -64,13 +63,21 @@ async function fetchAgentPrice() {
 
 async function fetchAll() {
   try {
-    const [cgRes, agentData] = await Promise.all([
+    // Fetch CoinGecko + AGENT + all custom CAs in parallel
+    const customSymbols = Object.keys(customCAs)
+    const agentFetch    = AGENT_CA !== 'PLACEHOLDER_AGENT_CA' ? fetchDexScreener(AGENT_CA) : Promise.resolve(null)
+    const customFetches = customSymbols.map(sym => fetchDexScreener(customCAs[sym]))
+
+    const [cgRes, agentData, ...customResults] = await Promise.all([
       fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ALL_IDS}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_high_24hr=true&include_low_24hr=true`),
-      fetchAgentPrice(),
+      agentFetch,
+      ...customFetches,
     ])
+
     const data = await cgRes.json()
     const prices = {}, changes = {}, raw = {}
 
+    // CoinGecko coins
     for (const [coin, id] of Object.entries(COINGECKO_IDS)) {
       if (data[id]) {
         const p = data[id].usd || 0
@@ -87,17 +94,26 @@ async function fetchAll() {
       }
     }
 
-    // Add $AGENT price
+    // $AGENT
     if (agentData) {
       prices['AGENT']  = fmtPrice(agentData.price)
       changes['AGENT'] = agentData.change24h.toFixed(2)
       raw['AGENT']     = agentData
     } else {
-      // Fallback to SOL until real CA is live
       prices['AGENT']  = prices['SOL'] || '...'
       changes['AGENT'] = changes['SOL'] || '0.00'
       raw['AGENT']     = raw['SOL'] || {}
     }
+
+    // Custom CA coins
+    customSymbols.forEach((sym, i) => {
+      const d = customResults[i]
+      if (d) {
+        prices[sym]  = fmtPrice(d.price)
+        changes[sym] = d.change24h.toFixed(2)
+        raw[sym]     = d
+      }
+    })
 
     store.prices     = prices
     store.changes    = changes
@@ -107,6 +123,16 @@ async function fetchAll() {
   } catch (e) {
     console.error('priceStore fetch error:', e)
   }
+}
+
+// Register a custom CA so priceStore fetches it on every cycle
+export function registerCustomCA(symbol, ca) {
+  if (!symbol || !ca) return
+  customCAs[symbol] = ca
+}
+
+export function unregisterCustomCA(symbol) {
+  delete customCAs[symbol]
 }
 
 export function startPriceStore() {

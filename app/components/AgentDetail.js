@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@supabase/supabase-js'
-import { startPriceStore, stopPriceStore, subscribePrices, getRawPrices } from '@/app/lib/priceStore'
+import { startPriceStore, stopPriceStore, subscribePrices, getRawPrices, registerCustomCA, unregisterCustomCA } from '@/app/lib/priceStore'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -156,6 +156,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [caResult, setCaResult]         = useState(null)
   const [caLoading, setCaLoading]       = useState(false)
   const [caError, setCaError]           = useState('')
+  const [customCoinCas, setCustomCoinCas] = useState(agent.custom_coin_cas || {})
   const tradingRef   = useRef(false)
   const intervalRef  = useRef(null)
   const countdownRef = useRef(null)
@@ -164,11 +165,18 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const activeCoin = selectedCoin || coins[0] || 'BTC'
 
   useEffect(() => {
+    // Register any custom CAs stored on this agent
+    const cas = agent.custom_coin_cas || {}
+    Object.entries(cas).forEach(([sym, ca]) => registerCustomCA(sym, ca))
     startPriceStore()
     const unsub = subscribePrices(({ prices: p, changes: c }) => {
       setPrices(p); setChanges(c)
     })
-    return () => { unsub(); stopPriceStore() }
+    return () => {
+      unsub(); stopPriceStore()
+      // Unregister custom CAs when leaving
+      Object.keys(cas).forEach(sym => unregisterCustomCA(sym))
+    }
   }, [])
 
   useEffect(() => {
@@ -258,8 +266,18 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
 
   async function saveCoins() {
     setSavingCoins(true)
-    await supabase.from('agents').update({ coins: editCoins }).eq('id', agent.id)
-    setAgent(a => ({ ...a, coins: editCoins }))
+    // Build updated custom_coin_cas — keep only CAs for coins still in editCoins
+    const updatedCas = {}
+    editCoins.forEach(sym => {
+      if (customCoinCas[sym]) updatedCas[sym] = customCoinCas[sym]
+    })
+    await supabase.from('agents').update({ coins: editCoins, custom_coin_cas: updatedCas }).eq('id', agent.id)
+    // Register new custom CAs with price store
+    Object.entries(updatedCas).forEach(([sym, ca]) => registerCustomCA(sym, ca))
+    // Unregister removed ones
+    Object.keys(customCoinCas).forEach(sym => { if (!updatedCas[sym]) unregisterCustomCA(sym) })
+    setCustomCoinCas(updatedCas)
+    setAgent(a => ({ ...a, coins: editCoins, custom_coin_cas: updatedCas }))
     setSavingCoins(false); setShowCoinEditor(false); setCoinSearch(''); setCaResult(null); setCaError('')
   }
 
@@ -405,7 +423,10 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                           Remove {caResult.id}
                         </button>
                       ) : (
-                        <button onClick={() => setEditCoins(prev => [...prev, caResult.id])}
+                        <button onClick={() => {
+                          setEditCoins(prev => [...prev, caResult.id])
+                          setCustomCoinCas(prev => ({ ...prev, [caResult.id]: coinSearch }))
+                        }}
                           className="w-full bg-emerald-500 text-white text-sm font-semibold py-2 rounded-xl hover:bg-emerald-600">
                           Add {caResult.id} to agent
                         </button>

@@ -204,7 +204,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
           prompt: agentPrompt, riskSettings: agent.risk_settings,
           behaviorSettings: agent.behavior_settings,
           portfolioValue: agent.portfolio_value,
-          openPositions, cachedPrices, forumSettings,
+          openPositions, cachedPrices, forumSettings, customCoinCas,
         })
       })
       const data = await res.json()

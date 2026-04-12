@@ -289,7 +289,10 @@ let decision
 const allCoins = [...coins]
 const actions  = ['BUY', 'HOLD', 'HOLD', 'CLOSE']
 const randAction = actions[Math.floor(Math.random() * actions.length)]
-const randCoin   = allCoins[Math.floor(Math.random() * allCoins.length)]
+// Only pick coins that have prices available
+const availableCoins = allCoins.filter(c => analysis[c] || memeAnalysis?.[c])
+if (!availableCoins.length) return Response.json({ action:'HOLD', reasoning:'No priced coins available', marketData:analysis, tradeId:null })
+const randCoin = availableCoins[Math.floor(Math.random() * availableCoins.length)]
 decision = {
   action:         randAction,
   coin:           randAction === 'HOLD' ? null : randCoin,

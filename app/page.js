@@ -204,8 +204,8 @@ export default function Home() {
         )}
         {tab === 'cockpit' && selectedAgent && (
           <AgentDetail
-  agentId={selectedAgent.id}
-  userId={user.id}
+  agent={selectedAgent}
+  user={user}
   onBack={() => setSelectedAgent(null)}
 />
         )}

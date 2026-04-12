@@ -285,20 +285,30 @@ Respond ONLY with valid JSON:
     const text = response.content[0]?.text || '{}'
 let decision
 
-// ── RANDOM MODE (testing) ─────────────────────────────────
-const allCoins = [...coins]
-const actions  = ['BUY', 'HOLD', 'HOLD', 'CLOSE']
-const randAction = actions[Math.floor(Math.random() * actions.length)]
-// Only pick coins that have prices available
 const availableCoins = allCoins.filter(c => analysis[c] || memeAnalysis?.[c])
 if (!availableCoins.length) return Response.json({ action:'HOLD', reasoning:'No priced coins available', marketData:analysis, tradeId:null })
-const randCoin = availableCoins[Math.floor(Math.random() * availableCoins.length)]
+
+const openCoinNames = (openPositions || []).map(p => p.coin)
+const hasOpenPositions = openCoinNames.length > 0
+
+// Only CLOSE if we actually have open positions
+const actions = hasOpenPositions
+  ? ['BUY', 'HOLD', 'CLOSE', 'HOLD']
+  : ['BUY', 'HOLD', 'HOLD', 'HOLD']
+
+const randAction = actions[Math.floor(Math.random() * actions.length)]
+
+// If CLOSE, only pick a coin we actually have open
+const randCoin = randAction === 'CLOSE'
+  ? openCoinNames[Math.floor(Math.random() * openCoinNames.length)]
+  : availableCoins[Math.floor(Math.random() * availableCoins.length)]
+
 decision = {
-  action:         randAction,
-  coin:           randAction === 'HOLD' ? null : randCoin,
-  amount_pct:     Math.floor(Math.random() * 20) + 5,
-  reasoning:      `Random test trade — ${randAction} ${randCoin || ''} for UI testing purposes.`,
-  confidence:     Math.floor(Math.random() * 10) + 1,
+  action:          randAction,
+  coin:            randAction === 'HOLD' ? null : randCoin,
+  amount_pct:      Math.floor(Math.random() * 20) + 5,
+  reasoning:       `Random test trade — ${randAction} ${randCoin || ''} for UI testing purposes.`,
+  confidence:      Math.floor(Math.random() * 10) + 1,
   indicators_used: ['RANDOM'],
 }
 // ─────────────────────────────────────────────────────────

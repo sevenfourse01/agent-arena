@@ -373,6 +373,10 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const investedVal    = parseFloat(agent.invested_value ?? 0)
   const polyBalance    = parseFloat(agent.polymarket_balance ?? 0)  // NEW
   const totalPnL = openPositions.reduce((sum, pos) => {
+  const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || 0
+  if (!currentPrice) return sum
+  return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
+}, 0) || 0
     const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,''))
     if (!currentPrice) return sum
     return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
@@ -570,7 +574,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
           ['Cash',         `$${cashBalance.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'available to trade', ''],
           ['Invested',     `$${investedVal.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'in open positions', investedVal > 0 ? 'text-emerald-600' : ''],
           ['Total return', `${ret>=0?'+':''}${ret.toFixed(1)}%`, 'since start', ret>=0?'text-emerald-600':'text-red-500'],
-          ['Open PnL',     `${totalPnL>=0?'+':''}$${totalPnL.toFixed(2)}`, 'unrealised', totalPnL>=0?'text-emerald-600':'text-red-500'],
+          ['Open PnL',     `${totalPnL>=0?'+':''}$${Number(totalPnL).toFixed(2)}`, 'unrealised', totalPnL>=0?'text-emerald-600':'text-red-500'],
         ].map(([l,v,s,c])=>(
           <div key={l} className="bg-gray-100 rounded-lg p-3">
             <div className="text-xs text-gray-400 uppercase tracking-wide mb-1">{l}</div>

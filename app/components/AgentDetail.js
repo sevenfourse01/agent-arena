@@ -350,10 +350,10 @@ export default function AgentDetail({ agentId, userId, onBack }) {
 
           {!editingCoins ? (
             <div className="flex flex-wrap gap-2">
-              {(agent.coins || []).map((c) => (
+              {(Array.isArray(agent.coins) ? agent.coins : []).map((c) => (
                 <span key={c} className="text-xs bg-gray-800 border border-gray-700 text-gray-300 px-2.5 py-1 rounded-full">{c}</span>
               ))}
-              {(agent.custom_coin_cas || []).map((ca) => (
+              {(Array.isArray(agent.custom_coin_cas) ? agent.custom_coin_cas : []).map((ca) => (
                 <span key={ca} className="text-xs bg-purple-900/40 border border-purple-700 text-purple-300 px-2.5 py-1 rounded-full">
                   CA: {ca.slice(0, 6)}…
                 </span>

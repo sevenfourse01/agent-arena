@@ -159,8 +159,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [customCoinCas, setCustomCoinCas] = useState(agent.custom_coin_cas || {})
   const [forumSettings, setForumSettings]   = useState(agent.forum_settings || { reddit:false, fourchan:false, cryptopanic:false })
   const [savingForums, setSavingForums]     = useState(false)
-
-  // ── POLYMARKET STATE (new) ──
   const [polyBets, setPolyBets]         = useState([])
   const [polyMarkets, setPolyMarkets]   = useState([])
   const [showBets, setShowBets]         = useState(false)
@@ -192,12 +190,10 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       setOpenPositions((data || []).filter(t => t.status === 'open'))
     }
     loadTrades()
-    // ── POLYMARKET LOAD (new) ──
     loadPolyBets()
     loadPolyMarkets()
   }, [agent.id])
 
-  // ── POLYMARKET FUNCTIONS (new) ──
   async function loadPolyBets() {
     try {
       const res  = await fetch(`/api/polymarket?type=bets&agentId=${agent.id}`)
@@ -254,7 +250,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         if (ua) setAgent(ua)
       }
 
-      // ── POLYMARKET RESULT (new) ──
       if (data.polymarket) {
         const b = data.polymarket
         setLog(prev => [{ color:'purple', label:'Polymarket bet', time:now,
@@ -272,7 +267,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       setTrades(newTrades || [])
       setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
 
-      // refresh agent for updated balances
       const { data: ua2 } = await supabase.from('agents').select('*').eq('id', agent.id).single()
       if (ua2) setAgent(ua2)
 
@@ -371,18 +365,14 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const portfolioValue = agent.portfolio_value || 10000
   const cashBalance    = parseFloat(agent.cash_balance ?? portfolioValue)
   const investedVal    = parseFloat(agent.invested_value ?? 0)
-  const polyBalance    = parseFloat(agent.polymarket_balance ?? 0)  // NEW
+  const polyBalance    = parseFloat(agent.polymarket_balance ?? 0)
+
   const totalPnL = openPositions.reduce((sum, pos) => {
-  const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || 0
-  if (!currentPrice) return sum
-  return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
-}, 0)
-    const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,''))
+    const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || 0
     if (!currentPrice) return sum
     return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
   }, 0)
 
-  // ── POLYMARKET DERIVED (new) ──
   const openBets     = polyBets.filter(b => b.status === 'open')
   const resolvedBets = polyBets.filter(b => b.status === 'resolved')
   const polyWins     = resolvedBets.filter(b => b.result === 'win').length
@@ -425,7 +415,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         ← Back to all agents
       </button>
 
-      {/* Coin editor modal — UNCHANGED */}
       {showCoinEditor && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[85vh] flex flex-col">
@@ -538,7 +527,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         </div>
       )}
 
-      {/* Agent header — UNCHANGED */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white font-bold text-lg">
@@ -568,7 +556,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         </div>
       </div>
 
-      {/* Stats — UNCHANGED */}
       <div className="grid grid-cols-4 gap-3 mb-4">
         {[
           ['Cash',         `$${cashBalance.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'available to trade', ''],
@@ -584,7 +571,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         ))}
       </div>
 
-      {/* Coin cards — UNCHANGED */}
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-medium text-gray-500">Monitored coins</span>
         <button onClick={() => { setEditCoins([...coins]); setShowCoinEditor(true) }}
@@ -618,7 +604,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 flex flex-col gap-4">
 
-          {/* Chart — UNCHANGED */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-semibold text-gray-900">{activeCoin}/USDT</span>
@@ -634,7 +619,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             <MiniChart symbol={COIN_MAP[activeCoin]||'BTCUSDT'} tf={tf}/>
           </div>
 
-          {/* Open positions — UNCHANGED */}
           {openPositions.length > 0 && (
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <div className="text-sm font-semibold text-gray-900 mb-3">Open positions</div>
@@ -661,7 +645,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </div>
           )}
 
-          {/* Thought log — UNCHANGED */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-semibold text-gray-900">Agent thought log</span>
@@ -694,7 +677,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </div>
           </div>
 
-          {/* Trade history — UNCHANGED */}
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
             <button onClick={() => setShowTradeLog(p => !p)}
               className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
@@ -751,10 +733,8 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
           </div>
         </div>
 
-        {/* Right column */}
         <div className="flex flex-col gap-4">
 
-          {/* Agent prompt — UNCHANGED */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-gray-900">Agent prompt</span>
@@ -768,7 +748,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </button>
           </div>
 
-          {/* Risk settings — UNCHANGED */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-3">Risk settings</div>
             {[
@@ -787,7 +766,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             ))}
           </div>
 
-          {/* Portfolio — UPDATED to show 3-way split */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-3">Portfolio</div>
             <div className="flex justify-between text-xs mb-1.5">
@@ -825,7 +803,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </div>
           </div>
 
-          {/* Information sources — UNCHANGED */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-1">Information sources</div>
             <p className="text-xs text-gray-400 mb-3">Enable social feeds your agent reads before every trade decision.</p>
@@ -850,7 +827,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             {savingForums && <p className="text-xs text-emerald-500 mt-2">Saved ✓</p>}
           </div>
 
-          {/* ── POLYMARKET CARD (new) ── */}
           <div className="bg-white border border-purple-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm font-semibold text-gray-900">🎯 Polymarket bets</span>
@@ -916,7 +892,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             )}
           </div>
 
-          {/* Agent wallet — UNCHANGED */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-2">Agent wallet</div>
             <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between mb-2">

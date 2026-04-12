@@ -150,7 +150,7 @@ export async function POST(request) {
     const fearGreed = await fetchFearGreed();
     const tradeResults = [];
     const marketSentiment = parseInt(fearGreed.value);
-    const blockNewBuys = marketSentiment < 20;
+    const blockNewBuys = false; // random mode — ignore sentiment
 
     // ── Standard Coins ────────────────────────────────────────────────
     const coinList = Array.isArray(coins) ? coins : [];

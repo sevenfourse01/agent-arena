@@ -237,6 +237,10 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       const now = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
       setLog(prev => [{ color:'red', label:'Error', time:now, msg:'Scan failed', reason:err.message }, ...prev])
     }
+    // Always refresh trades after scan
+    const { data: refreshed } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
+    setTrades(refreshed || [])
+    setOpenPositions((refreshed || []).filter(t => t.status === 'open'))
     setNextScanIn(60)
   }
 

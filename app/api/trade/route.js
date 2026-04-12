@@ -19,8 +19,6 @@ const CRYPTO_KEYWORDS = [
   'coinbase','binance','altcoin','memecoin','defi','token','blockchain',
 ];
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
 function calcEMA(prices, period) {
   const k = 2 / (period + 1);
   let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
@@ -54,7 +52,7 @@ async function fetchOHLC(coinId) {
       { headers: { Accept: 'application/json' } }
     );
     if (!res.ok) return null;
-    return await res.json(); // [[timestamp, o, h, l, c], ...]
+    return await res.json();
   } catch { return null; }
 }
 
@@ -108,8 +106,6 @@ async function fetchPolymarketMarkets() {
   } catch { return []; }
 }
 
-// ─── Main Route ─────────────────────────────────────────────────────────────
-
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -120,41 +116,45 @@ export async function POST(request) {
       riskSettings = {},
       behaviorSettings = {},
       cachedPrices = {},
-      customCoinCAs = [],
+      customCoinCas = {},
+      openPositions: clientOpenPositions = [],
+      portfolioValue: clientPortfolioValue = 10000,
     } = body;
 
-    const { data: agent, error: agentErr } = await supabase
+    // ── Get current balances from DB ──────────────────────────────────
+    // Use maybeSingle so RLS non-matches don't throw
+    const { data: agentRow } = await supabase
       .from('agents')
-      .select('*')
+      .select('cash_balance, invested_value, polymarket_balance, portfolio_value, win_rate, total_return')
       .eq('id', agentId)
-      .single();
-    if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 });
+      .maybeSingle();
 
-    let cashBalance = typeof agent.cash_balance === 'number' ? agent.cash_balance : 10000;
-    let investedValue = typeof agent.invested_value === 'number' ? agent.invested_value : 0;
-    let polyBalance = typeof agent.polymarket_balance === 'number' ? agent.polymarket_balance : 0;
+    let cashBalance  = agentRow?.cash_balance  ?? clientPortfolioValue ?? 10000;
+    let investedValue = agentRow?.invested_value ?? 0;
+    let polyBalance  = agentRow?.polymarket_balance ?? 0;
 
-    const { data: openTrades } = await supabase
+    // ── Get open trades from DB ───────────────────────────────────────
+    const { data: openTradesDB } = await supabase
       .from('trades')
       .select('*')
       .eq('agent_id', agentId)
       .eq('status', 'open');
 
-    const openPositions = openTrades || [];
-    const maxPositions = riskSettings.maxPositions || 2;
-    const positionSizePct = riskSettings.positionSize || 10;
-    const stopLossPct = riskSettings.stopLoss || 5;
-    const takeProfitPct = riskSettings.takeProfit || 15;
+    const openPositions = openTradesDB || clientOpenPositions || [];
+
+    const maxPositions   = riskSettings.maxPositions   || 2;
+    const positionSizePct = riskSettings.positionSize  || 10;
+    const stopLossPct    = riskSettings.stopLoss       || 5;
+    const takeProfitPct  = riskSettings.takeProfit     || 15;
 
     const fearGreed = await fetchFearGreed();
     const tradeResults = [];
-
-    // ── Fear & Greed check (extreme fear = no new buys) ──
     const marketSentiment = parseInt(fearGreed.value);
     const blockNewBuys = marketSentiment < 20;
 
-    // ─── Standard Coins ────────────────────────────────────────────────
-    for (const coin of coins) {
+    // ── Standard Coins ────────────────────────────────────────────────
+    const coinList = Array.isArray(coins) ? coins : [];
+    for (const coin of coinList) {
       const symbol = coin.toUpperCase();
       const coinId = COINGECKO_IDS[symbol];
       if (!coinId) continue;
@@ -162,7 +162,6 @@ export async function POST(request) {
       let price = cachedPrices[symbol] || cachedPrices[coinId] || null;
       let rsi = 50;
       let macdData = { histogram: 0 };
-      let volume = 0;
 
       const ohlc = await fetchOHLC(coinId);
       if (ohlc && Array.isArray(ohlc) && ohlc.length > 0) {
@@ -170,30 +169,19 @@ export async function POST(request) {
         rsi = calcRSI(closes);
         macdData = calcMACD(closes);
         if (!price) price = closes[closes.length - 1];
-        // volume proxy: last candle high - low range
-        volume = ohlc[ohlc.length - 1]?.[2] - ohlc[ohlc.length - 1]?.[3] || 0;
       }
-
       if (!price) continue;
 
       const openPosition = openPositions.find((t) => t.coin === symbol);
-
-      // ── RANDOM MODE (testing) ──
       const rand = Math.random();
       let action = 'HOLD';
 
       if (openPosition) {
-        const entryPrice = openPosition.entry_price;
-        const changePct = ((price - entryPrice) / entryPrice) * 100;
-        if (changePct >= takeProfitPct || changePct <= -stopLossPct || rsi > 75) {
-          action = 'CLOSE';
-        } else if (rand < 0.2) {
-          action = 'CLOSE';
-        }
+        const changePct = ((price - openPosition.entry_price) / openPosition.entry_price) * 100;
+        if (changePct >= takeProfitPct || changePct <= -stopLossPct || rsi > 75) action = 'CLOSE';
+        else if (rand < 0.2) action = 'CLOSE';
       } else {
-        if (!blockNewBuys && openPositions.length < maxPositions && rand < 0.25) {
-          action = 'BUY';
-        }
+        if (!blockNewBuys && openPositions.length < maxPositions && rand < 0.25) action = 'BUY';
       }
 
       const tradeSize = (cashBalance * positionSizePct) / 100;
@@ -201,53 +189,41 @@ export async function POST(request) {
       if (action === 'BUY' && cashBalance >= tradeSize && tradeSize > 0) {
         cashBalance -= tradeSize;
         investedValue += tradeSize;
-
         await supabase.from('trades').insert({
-          agent_id: agentId,
-          user_id: userId,
-          coin: symbol,
-          type: 'buy',
-          entry_price: price,
-          amount: parseFloat(tradeSize.toFixed(2)),
-          status: 'open',
-          reasoning: `BUY — RSI: ${rsi.toFixed(1)}, MACD hist: ${macdData.histogram.toFixed(4)}, Fear/Greed: ${fearGreed.value} (${fearGreed.value_classification})`,
+          agent_id: agentId, user_id: userId, coin: symbol, type: 'buy',
+          entry_price: price, amount: parseFloat(tradeSize.toFixed(2)), status: 'open',
+          reasoning: `BUY — RSI: ${rsi.toFixed(1)}, MACD: ${macdData.histogram.toFixed(4)}, F&G: ${fearGreed.value}`,
         });
-
-        tradeResults.push({ coin: symbol, action: 'BUY', price, amount: tradeSize });
+        tradeResults.push({ action: 'BUY', coin: symbol, price, amount: tradeSize });
       }
 
       if (action === 'CLOSE' && openPosition) {
         const pnlPct = (price - openPosition.entry_price) / openPosition.entry_price;
         const pnl = openPosition.amount * pnlPct;
-        const returned = openPosition.amount + pnl;
-
-        cashBalance += returned;
+        cashBalance += openPosition.amount + pnl;
         investedValue = Math.max(0, investedValue - openPosition.amount);
-
         await supabase.from('trades').update({
-          status: 'closed',
-          exit_price: price,
+          status: 'closed', exit_price: price,
           pnl: parseFloat(pnl.toFixed(2)),
           closed_at: new Date().toISOString(),
           reasoning: `CLOSE — Exit $${price.toFixed(4)}, P&L: $${pnl.toFixed(2)}`,
         }).eq('id', openPosition.id);
-
-        tradeResults.push({ coin: symbol, action: 'CLOSE', price, pnl });
+        tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl });
       }
     }
 
-    // ─── Custom CA Coins (Meme Mode) ───────────────────────────────────
-    for (const ca of customCoinCAs) {
-      if (!ca || typeof ca !== 'string') continue;
+    // ── Custom CA Meme Coins ──────────────────────────────────────────
+    const caEntries = typeof customCoinCas === 'object' && !Array.isArray(customCoinCas)
+      ? Object.entries(customCoinCas)
+      : [];
 
+    for (const [sym, ca] of caEntries) {
+      if (!ca) continue;
       const dex = await fetchDexScreener(ca);
       if (!dex) continue;
-
-      const { symbol, price, change1h, change6h, change24h, volume24h, liquidity, marketCap } = dex;
-
+      const { symbol, price, change1h, change6h, change24h, volume24h, liquidity } = dex;
       const openPosition = openPositions.find((t) => t.coin === symbol);
 
-      // Meme coin signals
       let bullishSignals = 0;
       if (change1h > 3) bullishSignals++;
       if (change6h > 8) bullishSignals++;
@@ -257,60 +233,41 @@ export async function POST(request) {
 
       const rand = Math.random();
       let action = 'HOLD';
-
       if (openPosition) {
         const changePct = ((price - openPosition.entry_price) / openPosition.entry_price) * 100;
         if (changePct >= takeProfitPct || changePct <= -stopLossPct) action = 'CLOSE';
         else if (rand < 0.15) action = 'CLOSE';
       } else {
-        if (bullishSignals >= 3 && !blockNewBuys && openPositions.length < maxPositions && rand < 0.3) {
-          action = 'BUY';
-        }
+        if (bullishSignals >= 3 && !blockNewBuys && openPositions.length < maxPositions && rand < 0.3) action = 'BUY';
       }
 
       const tradeSize = (cashBalance * positionSizePct) / 100;
-
       if (action === 'BUY' && cashBalance >= tradeSize && tradeSize > 0) {
-        cashBalance -= tradeSize;
-        investedValue += tradeSize;
-
+        cashBalance -= tradeSize; investedValue += tradeSize;
         await supabase.from('trades').insert({
-          agent_id: agentId,
-          user_id: userId,
-          coin: symbol,
-          type: 'buy',
-          entry_price: price,
-          amount: parseFloat(tradeSize.toFixed(2)),
-          status: 'open',
-          reasoning: `MEME BUY — ${bullishSignals}/5 bullish signals. 1h: ${change1h}%, 24h: ${change24h}%, Vol: $${volume24h.toFixed(0)}, Liq: $${liquidity.toFixed(0)}`,
+          agent_id: agentId, user_id: userId, coin: symbol, type: 'buy',
+          entry_price: price, amount: parseFloat(tradeSize.toFixed(2)), status: 'open',
+          reasoning: `MEME BUY — ${bullishSignals}/5 signals. 1h:${change1h}% 24h:${change24h}%`,
         });
-
-        tradeResults.push({ coin: symbol, action: 'BUY', price, amount: tradeSize, meme: true });
+        tradeResults.push({ action: 'BUY', coin: symbol, price, amount: tradeSize, meme: true });
       }
-
       if (action === 'CLOSE' && openPosition) {
         const pnlPct = (price - openPosition.entry_price) / openPosition.entry_price;
         const pnl = openPosition.amount * pnlPct;
         cashBalance += openPosition.amount + pnl;
         investedValue = Math.max(0, investedValue - openPosition.amount);
-
         await supabase.from('trades').update({
-          status: 'closed',
-          exit_price: price,
-          pnl: parseFloat(pnl.toFixed(2)),
-          closed_at: new Date().toISOString(),
+          status: 'closed', exit_price: price,
+          pnl: parseFloat(pnl.toFixed(2)), closed_at: new Date().toISOString(),
         }).eq('id', openPosition.id);
-
-        tradeResults.push({ coin: symbol, action: 'CLOSE', price, pnl });
+        tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl });
       }
     }
 
-    // ─── Polymarket Betting ────────────────────────────────────────────
+    // ── Polymarket Betting ────────────────────────────────────────────
     let polyResult = null;
-
     try {
       const markets = await fetchPolymarketMarkets();
-
       if (markets.length > 0) {
         const { data: openBets } = await supabase
           .from('polymarket_bets')
@@ -318,38 +275,34 @@ export async function POST(request) {
           .eq('agent_id', agentId)
           .eq('status', 'open');
 
-        const openBetCount = openBets?.length || 0;
-
-        // Auto-resolve old bets (> 7 days)
+        // Auto-resolve old bets
         for (const bet of openBets || []) {
           const ageInDays = (Date.now() - new Date(bet.created_at).getTime()) / 86400000;
           if (ageInDays > 7) {
             const won = Math.random() < (bet.odds || 0.5);
             const pnl = won ? bet.potential_payout - bet.stake : -bet.stake;
-
             await supabase.from('polymarket_bets').update({
-              status: 'resolved',
-              result: won ? 'win' : 'loss',
-              pnl: parseFloat(pnl.toFixed(2)),
-              resolved_at: new Date().toISOString(),
+              status: 'resolved', result: won ? 'win' : 'loss',
+              pnl: parseFloat(pnl.toFixed(2)), resolved_at: new Date().toISOString(),
             }).eq('id', bet.id);
-
             polyBalance = Math.max(0, polyBalance - bet.stake);
             if (won) cashBalance += bet.potential_payout;
           }
         }
 
-        // Place new bet — 12% chance per scan, max 3 open bets
+        // Place new bet — 12% chance, max 3 open
+        const openBetCount = (openBets || []).filter(b => {
+          const age = (Date.now() - new Date(b.created_at).getTime()) / 86400000;
+          return age <= 7;
+        }).length;
+
         if (openBetCount < 3 && Math.random() < 0.12 && cashBalance > 150) {
           const market = markets[Math.floor(Math.random() * markets.length)];
           const outcomes = market.outcomes || ['Yes', 'No'];
-          const prices = market.outcomePrices || ['0.5', '0.5'];
-
-          // Prefer the underdog slightly for bigger payouts
+          const prices_ = market.outcomePrices || ['0.5', '0.5'];
           const idx = Math.random() < 0.4 ? 1 : 0;
           const outcome = outcomes[idx];
-          const odds = parseFloat(prices[idx]) || 0.5;
-
+          const odds = parseFloat(prices_[idx]) || 0.5;
           const maxStake = Math.min(cashBalance * 0.04, 250);
           const stake = parseFloat(Math.max(50, maxStake).toFixed(2));
           const potentialPayout = parseFloat((stake / odds).toFixed(2));
@@ -358,24 +311,16 @@ export async function POST(request) {
           polyBalance += stake;
 
           const { error: betErr } = await supabase.from('polymarket_bets').insert({
-            agent_id: agentId,
-            user_id: userId,
-            market_id: market.id,
-            question: market.question,
-            outcome,
-            odds,
-            stake,
-            potential_payout: potentialPayout,
-            status: 'open',
-            reasoning: `Polymarket bet — ${(odds * 100).toFixed(0)}% implied probability. Potential 2x payout at $${potentialPayout.toFixed(0)}.`,
+            agent_id: agentId, user_id: userId,
+            market_id: market.id, question: market.question,
+            outcome, odds, stake, potential_payout: potentialPayout, status: 'open',
+            reasoning: `Bet — ${(odds * 100).toFixed(0)}% implied prob. Payout: $${potentialPayout.toFixed(0)}`,
           });
 
           if (!betErr) {
-            polyResult = { action: 'BET', market: market.question, outcome, stake, odds };
+            polyResult = { action: 'BET', market: market.question, outcome, stake, odds, potential_payout: potentialPayout };
           } else {
-            // Rollback balance changes if insert failed
-            cashBalance += stake;
-            polyBalance -= stake;
+            cashBalance += stake; polyBalance -= stake;
           }
         }
       }
@@ -383,43 +328,45 @@ export async function POST(request) {
       console.error('Polymarket error:', polyErr.message);
     }
 
-    // ─── Recalculate portfolio & update agent ──────────────────────────
-
+    // ── Update agent balances ─────────────────────────────────────────
     const { data: allClosed } = await supabase
-      .from('trades')
-      .select('pnl')
-      .eq('agent_id', agentId)
-      .eq('status', 'closed');
+      .from('trades').select('pnl').eq('agent_id', agentId).eq('status', 'closed');
 
     const closedCount = allClosed?.length || 0;
     const wins = allClosed?.filter((t) => t.pnl > 0).length || 0;
     const winRate = closedCount > 0 ? parseFloat(((wins / closedCount) * 100).toFixed(1)) : 0;
-
     const portfolioValue = cashBalance + investedValue + polyBalance;
     const totalReturn = parseFloat((((portfolioValue - 10000) / 10000) * 100).toFixed(2));
 
     await supabase.from('agents').update({
-      cash_balance: parseFloat(cashBalance.toFixed(2)),
-      invested_value: parseFloat(Math.max(0, investedValue).toFixed(2)),
+      cash_balance:       parseFloat(cashBalance.toFixed(2)),
+      invested_value:     parseFloat(Math.max(0, investedValue).toFixed(2)),
       polymarket_balance: parseFloat(Math.max(0, polyBalance).toFixed(2)),
-      portfolio_value: parseFloat(portfolioValue.toFixed(2)),
-      win_rate: winRate,
-      total_return: totalReturn,
-      status: 'active',
+      portfolio_value:    parseFloat(portfolioValue.toFixed(2)),
+      win_rate: winRate, total_return: totalReturn, status: 'active',
     }).eq('id', agentId);
 
+    // ── Return in the format the old AgentDetail expects ─────────────
+    const firstTrade = tradeResults[0];
     return NextResponse.json({
-      success: true,
-      trades: tradeResults,
+      // Old format fields (for thought log compatibility)
+      action:    firstTrade?.action || 'HOLD',
+      coin:      firstTrade?.coin   || null,
+      price:     firstTrade?.price  || null,
+      amount:    firstTrade?.amount || null,
+      confidence: 7,
+      reasoning: tradeResults.length
+        ? tradeResults.map(t => `${t.action} ${t.coin}`).join(', ')
+        : 'No trades this scan.',
+      trade: firstTrade?.pnl != null ? { pnl: firstTrade.pnl } : null,
+      // New fields
+      success:   true,
+      trades:    tradeResults,
       polymarket: polyResult,
       fearGreed,
-      portfolio: {
-        cash: cashBalance,
-        invested: investedValue,
-        polymarket: polyBalance,
-        total: portfolioValue,
-      },
+      portfolio: { cash: cashBalance, invested: investedValue, polymarket: polyBalance, total: portfolioValue },
     });
+
   } catch (err) {
     console.error('Trade route error:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });

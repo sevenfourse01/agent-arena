@@ -283,9 +283,22 @@ Respond ONLY with valid JSON:
     })
 
     const text = response.content[0]?.text || '{}'
-    let decision
-    try { decision = JSON.parse(text.replace(/```json|```/g,'').trim()) }
-    catch { decision = { action:'HOLD', coin:null, amount_pct:0, reasoning:text, confidence:5, indicators_used:[] } }
+let decision
+
+// ── RANDOM MODE (testing) ─────────────────────────────────
+const allCoins = [...coins]
+const actions  = ['BUY', 'HOLD', 'HOLD', 'CLOSE']
+const randAction = actions[Math.floor(Math.random() * actions.length)]
+const randCoin   = allCoins[Math.floor(Math.random() * allCoins.length)]
+decision = {
+  action:         randAction,
+  coin:           randAction === 'HOLD' ? null : randCoin,
+  amount_pct:     Math.floor(Math.random() * 20) + 5,
+  reasoning:      `Random test trade — ${randAction} ${randCoin || ''} for UI testing purposes.`,
+  confidence:     Math.floor(Math.random() * 10) + 1,
+  indicators_used: ['RANDOM'],
+}
+// ─────────────────────────────────────────────────────────
 
     if (decision.action === 'HOLD' || !decision.coin) {
       return Response.json({ action:'HOLD', reasoning:decision.reasoning, confidence:decision.confidence, marketData:{...analysis,...memeAnalysis}, tradeId:null })

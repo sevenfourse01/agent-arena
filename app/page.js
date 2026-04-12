@@ -204,10 +204,10 @@ export default function Home() {
         )}
         {tab === 'cockpit' && selectedAgent && (
           <AgentDetail
-            agent={selectedAgent}
-            user={user}
-            onBack={() => setSelectedAgent(null)}
-          />
+  agentId={selectedAgent.id}
+  userId={user.id}
+  onBack={() => setSelectedAgent(null)}
+/>
         )}
         {tab === 'leaderboard'  && <Leaderboard user={user}/>}
         {tab === 'competitions' && <Competitions userBalance={profile?.agent_token_balance||2400}/>}

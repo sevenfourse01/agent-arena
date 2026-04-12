@@ -137,6 +137,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     reason:'All systems operational. Will scan markets and make trading decisions every 60 seconds.'
   }])
   const [trades, setTrades]             = useState([])
+  const [showTradeLog, setShowTradeLog]   = useState(false)
   const [openPositions, setOpenPositions] = useState([])
   const [prompt_, setPrompt]            = useState('')
   const [loading, setLoading]           = useState(false)
@@ -654,38 +655,61 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </div>
           </div>
 
-          {/* Trade history */}
-          {trades.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-xl p-4">
-              <div className="text-sm font-semibold text-gray-900 mb-3">Trade history</div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-100">
-                      {['Time','Coin','Type','Entry','Exit','PnL','Status'].map(h=>(
-                        <th key={h} className="text-left text-xs text-gray-400 font-medium pb-2 pr-3">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {trades.slice(0,20).map((t,i)=>(
-                      <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-                        <td className="py-2 pr-3 text-xs text-gray-400 whitespace-nowrap">{new Date(t.created_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}</td>
-                        <td className="py-2 pr-3 text-xs font-semibold text-gray-900">{t.coin}</td>
-                        <td className="py-2 pr-3"><span className={`text-xs font-bold px-1.5 py-0.5 rounded ${t.type==='BUY'?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-600'}`}>{t.type}</span></td>
-                        <td className="py-2 pr-3 text-xs text-gray-700 font-mono">{formatPrice(t.entry_price)}</td>
-                        <td className="py-2 pr-3 text-xs text-gray-700 font-mono">{t.exit_price ? formatPrice(t.exit_price) : '—'}</td>
-                        <td className="py-2 pr-3 text-xs font-semibold">
-                          {t.pnl ? <span className={t.pnl>=0?'text-emerald-600':'text-red-500'}>{t.pnl>=0?'+':''}{formatPrice(Math.abs(t.pnl))}</span> : '—'}
-                        </td>
-                        <td className="py-2 pr-3"><span className={`text-xs px-1.5 py-0.5 rounded-full ${t.status==='open'?'bg-blue-50 text-blue-600':'bg-gray-100 text-gray-500'}`}>{t.status}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {/* Trade log — collapsible under thought log */}
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <button onClick={() => setShowTradeLog(p => !p)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-900">Trade history</span>
+                {trades.length > 0 && (
+                  <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">{trades.length}</span>
+                )}
               </div>
-            </div>
-          )}
+              <span className="text-gray-400 text-sm">{showTradeLog ? '▲' : '▼'}</span>
+            </button>
+            {showTradeLog && (
+              <div className="border-t border-gray-100">
+                {trades.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-gray-400">No trades yet — start trading to see history here</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-gray-100 bg-gray-50">
+                          {['Time','Coin','Type','Entry','Exit','PnL','Reason','Status'].map(h=>(
+                            <th key={h} className="text-left text-xs text-gray-400 font-medium py-2 px-3">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trades.slice(0,50).map((t,i)=>(
+                          <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
+                            <td className="py-2.5 px-3 text-xs text-gray-400 whitespace-nowrap">
+                              {new Date(t.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}
+                              {' '}{new Date(t.created_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}
+                            </td>
+                            <td className="py-2.5 px-3 text-xs font-bold text-gray-900">{t.coin}</td>
+                            <td className="py-2.5 px-3">
+                              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${t.type==='BUY'?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-600'}`}>{t.type}</span>
+                            </td>
+                            <td className="py-2.5 px-3 text-xs text-gray-700 font-mono">{formatPrice(t.entry_price)}</td>
+                            <td className="py-2.5 px-3 text-xs text-gray-700 font-mono">{t.exit_price ? formatPrice(t.exit_price) : '—'}</td>
+                            <td className="py-2.5 px-3 text-xs font-semibold">
+                              {t.pnl != null ? <span className={t.pnl>=0?'text-emerald-600':'text-red-500'}>{t.pnl>=0?'+':''}{formatPrice(Math.abs(t.pnl))}</span> : '—'}
+                            </td>
+                            <td className="py-2.5 px-3 text-xs text-gray-400 max-w-xs truncate" title={t.reasoning}>{t.reasoning || '—'}</td>
+                            <td className="py-2.5 px-3">
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full ${t.status==='open'?'bg-blue-50 text-blue-600':'bg-gray-100 text-gray-500'}`}>{t.status}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right column */}

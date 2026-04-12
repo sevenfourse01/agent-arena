@@ -5,8 +5,6 @@ import AgentCockpit  from './components/AgentCockpit'
 import AgentCreator  from './components/AgentCreator'
 import AgentDetail   from './components/AgentDetail'
 import Leaderboard   from './components/Leaderboard'
-import History       from './components/History'
-import MemeCoinTracker from './components/MemeCoinTracker'
 import Competitions  from './components/Competitions'
 import AgentCoin     from './components/AgentCoin'
 import Profile       from './components/Profile'
@@ -155,7 +153,6 @@ export default function Home() {
   if (page === 'landing') return <LandingPage onLaunch={() => setPage('auth')} onGoTo={handleGoTo}/>
   if (page === 'auth')    return <Auth onLogin={handleLogin}/>
 
-  // Full screen creator overlay
   if (showCreator) return (
     <AgentCreator
       user={user}
@@ -166,13 +163,11 @@ export default function Home() {
   )
 
   const tabs = [
-    { id: 'cockpit',      label: '🤖 My Agents'    },
-    { id: 'memecoins',    label: 'Meme coins'      },
-    { id: 'history',      label: 'Trade history'   },
-    { id: 'leaderboard',  label: 'Leaderboard'     },
-    { id: 'competitions', label: '🏆 Competitions'  },
-    { id: 'agent',        label: '🟢 $AGENT'        },
-    { id: 'profile',      label: '👤 Profile'       },
+    { id: 'cockpit',      label: '🤖 My Agents'   },
+    { id: 'leaderboard',  label: 'Leaderboard'    },
+    { id: 'competitions', label: '🏆 Competitions' },
+    { id: 'agent',        label: '🟢 $AGENT'       },
+    { id: 'profile',      label: '👤 Profile'      },
   ]
 
   return (
@@ -214,9 +209,7 @@ export default function Home() {
             onBack={() => setSelectedAgent(null)}
           />
         )}
-        {tab === 'memecoins'    && <MemeCoinTracker user={user}/>}
-        {tab === 'history'      && <History/>}
-        {tab === 'leaderboard'  && <Leaderboard/>}
+        {tab === 'leaderboard'  && <Leaderboard user={user}/>}
         {tab === 'competitions' && <Competitions userBalance={profile?.agent_token_balance||2400}/>}
         {tab === 'agent'        && <AgentCoin/>}
         {tab === 'profile'      && <Profile user={user} profile={profile}/>}

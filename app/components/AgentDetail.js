@@ -376,7 +376,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || 0
   if (!currentPrice) return sum
   return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
-}, 0) || 0
+}, 0)
     const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,''))
     if (!currentPrice) return sum
     return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)

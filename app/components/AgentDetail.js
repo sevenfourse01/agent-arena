@@ -30,20 +30,17 @@ export default function AgentDetail({ agentId, userId, onBack }) {
 
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
-  const priceStoreRef = useRef(null);
 
-  // ── Load agent ──────────────────────────────────────────────────────
   const loadAgent = useCallback(async () => {
     const { data } = await supabase.from('agents').select('*').eq('id', agentId).single();
     if (data) {
       setAgent(data);
-      setSelectedCoins(data.coins || []);
-      setCustomCAs(data.custom_coin_cas || []);
+      setSelectedCoins(Array.isArray(data.coins) ? data.coins : []);
+      setCustomCAs(Array.isArray(data.custom_coin_cas) ? data.custom_coin_cas : []);
     }
     setLoading(false);
   }, [agentId]);
 
-  // ── Load trades ─────────────────────────────────────────────────────
   const loadTrades = useCallback(async () => {
     const { data } = await supabase
       .from('trades')
@@ -54,14 +51,14 @@ export default function AgentDetail({ agentId, userId, onBack }) {
     setTrades(data || []);
   }, [agentId]);
 
-  // ── Load Polymarket bets ────────────────────────────────────────────
   const loadPolyBets = useCallback(async () => {
-    const res = await fetch(`/api/polymarket?type=bets&agentId=${agentId}`);
-    const data = await res.json();
-    setPolyBets(data.bets || []);
+    try {
+      const res = await fetch(`/api/polymarket?type=bets&agentId=${agentId}`);
+      const data = await res.json();
+      setPolyBets(data.bets || []);
+    } catch {}
   }, [agentId]);
 
-  // ── Load live Polymarket markets ────────────────────────────────────
   const loadPolyMarkets = useCallback(async () => {
     try {
       const res = await fetch('/api/polymarket?type=markets');
@@ -77,12 +74,10 @@ export default function AgentDetail({ agentId, userId, onBack }) {
     loadPolyMarkets();
   }, [loadAgent, loadTrades, loadPolyBets, loadPolyMarkets]);
 
-  // ── Run one scan ────────────────────────────────────────────────────
   const runScan = useCallback(async () => {
     if (!agent) return;
-
     const timestamp = new Date().toLocaleTimeString();
-    setScanLog((prev) => [`[${timestamp}] Scanning ${(agent.coins || []).length} coins + Polymarket...`, ...prev.slice(0, 19)]);
+    setScanLog((prev) => [`[${timestamp}] Scanning ${(Array.isArray(agent.coins) ? agent.coins : []).length} coins + Polymarket...`, ...prev.slice(0, 19)]);
 
     try {
       const res = await fetch('/api/trade', {
@@ -91,10 +86,10 @@ export default function AgentDetail({ agentId, userId, onBack }) {
         body: JSON.stringify({
           agentId,
           userId,
-          coins: agent.coins || [],
+          coins: Array.isArray(agent.coins) ? agent.coins : [],
           riskSettings: agent.risk_settings || {},
           behaviorSettings: agent.behavior_settings || {},
-          customCoinCAs: agent.custom_coin_cas || [],
+          customCoinCAs: Array.isArray(agent.custom_coin_cas) ? agent.custom_coin_cas : [],
           cachedPrices: {},
         }),
       });
@@ -131,7 +126,6 @@ export default function AgentDetail({ agentId, userId, onBack }) {
     }
   }, [agent, agentId, userId, loadAgent, loadTrades, loadPolyBets]);
 
-  // ── Start / Stop ────────────────────────────────────────────────────
   const startTrading = useCallback(() => {
     setIsRunning(true);
     runScan();
@@ -151,9 +145,11 @@ export default function AgentDetail({ agentId, userId, onBack }) {
     await loadAgent();
   }, [agentId, loadAgent]);
 
-  useEffect(() => () => { clearInterval(intervalRef.current); clearInterval(countdownRef.current); }, []);
+  useEffect(() => () => {
+    clearInterval(intervalRef.current);
+    clearInterval(countdownRef.current);
+  }, []);
 
-  // ── Save coins ──────────────────────────────────────────────────────
   const saveCoins = async () => {
     setSaving(true);
     await supabase.from('agents').update({
@@ -173,7 +169,6 @@ export default function AgentDetail({ agentId, userId, onBack }) {
     }
   };
 
-  // ── Forum toggles ───────────────────────────────────────────────────
   const toggleForum = async (key) => {
     const current = agent?.forum_settings || {};
     const updated = { ...current, [key]: !current[key] };
@@ -193,14 +188,14 @@ export default function AgentDetail({ agentId, userId, onBack }) {
     </div>
   );
 
-  const cash = agent.cash_balance ?? 0;
-  const invested = agent.invested_value ?? 0;
-  const poly = agent.polymarket_balance ?? 0;
-  const total = agent.portfolio_value ?? 10000;
-  const totalReturn = agent.total_return ?? 0;
+  const cash = typeof agent.cash_balance === 'number' ? agent.cash_balance : 10000;
+  const invested = typeof agent.invested_value === 'number' ? agent.invested_value : 0;
+  const poly = typeof agent.polymarket_balance === 'number' ? agent.polymarket_balance : 0;
+  const total = typeof agent.portfolio_value === 'number' ? agent.portfolio_value : 10000;
+  const totalReturn = typeof agent.total_return === 'number' ? agent.total_return : 0;
   const winRate = agent.win_rate ?? 0;
 
-  const cashPct = total > 0 ? (cash / total) * 100 : 0;
+  const cashPct = total > 0 ? (cash / total) * 100 : 100;
   const investedPct = total > 0 ? (invested / total) * 100 : 0;
   const polyPct = total > 0 ? (poly / total) * 100 : 0;
 
@@ -211,13 +206,15 @@ export default function AgentDetail({ agentId, userId, onBack }) {
   const polyWins = resolvedBets.filter((b) => b.result === 'win').length;
   const polyWinRate = resolvedBets.length > 0 ? ((polyWins / resolvedBets.length) * 100).toFixed(0) : '—';
 
+  const agentCoins = Array.isArray(agent.coins) ? agent.coins : [];
+  const agentCAs = Array.isArray(agent.custom_coin_cas) ? agent.custom_coin_cas : [];
   const forums = agent.forum_settings || {};
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
 
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="text-gray-500 hover:text-white transition text-sm">← Back</button>
@@ -232,16 +229,14 @@ export default function AgentDetail({ agentId, userId, onBack }) {
           <button
             onClick={isRunning ? stopTrading : startTrading}
             className={`px-5 py-2 rounded-lg font-semibold text-sm transition ${
-              isRunning
-                ? 'bg-red-600 hover:bg-red-700 text-white'
-                : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              isRunning ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
             }`}
           >
             {isRunning ? '⏸ Pause' : '▶ Start'}
           </button>
         </div>
 
-        {/* ── Stats Row ── */}
+        {/* Stats Row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
             <div className="text-xs text-gray-500 mb-1">Portfolio Value</div>
@@ -265,57 +260,35 @@ export default function AgentDetail({ agentId, userId, onBack }) {
           </div>
         </div>
 
-        {/* ── Portfolio Breakdown (3-way) ── */}
+        {/* Portfolio Breakdown */}
         <div className="bg-gray-900 rounded-xl p-5 border border-gray-800">
           <div className="text-sm font-semibold text-gray-300 mb-4">Portfolio Allocation</div>
-
-          {/* Bar */}
           <div className="h-3 rounded-full overflow-hidden flex mb-4 bg-gray-800">
-            {cashPct > 0 && (
-              <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${cashPct}%` }} />
-            )}
-            {investedPct > 0 && (
-              <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${investedPct}%` }} />
-            )}
-            {polyPct > 0 && (
-              <div className="bg-purple-500 h-full transition-all duration-500" style={{ width: `${polyPct}%` }} />
-            )}
+            {cashPct > 0 && <div className="bg-blue-500 h-full transition-all duration-500" style={{ width: `${cashPct}%` }} />}
+            {investedPct > 0 && <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${investedPct}%` }} />}
+            {polyPct > 0 && <div className="bg-purple-500 h-full transition-all duration-500" style={{ width: `${polyPct}%` }} />}
           </div>
-
-          {/* Legend */}
           <div className="grid grid-cols-3 gap-3">
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-1">
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                <span className="text-xs text-gray-400">Cash</span>
+            {[
+              { label: 'Cash', value: cash, pct: cashPct, color: 'bg-blue-500' },
+              { label: 'Crypto', value: invested, pct: investedPct, color: 'bg-emerald-500' },
+              { label: 'Polymarket', value: poly, pct: polyPct, color: 'bg-purple-500' },
+            ].map(({ label, value, pct, color }) => (
+              <div key={label} className="text-center">
+                <div className="flex items-center justify-center gap-1.5 mb-1">
+                  <div className={`w-2.5 h-2.5 rounded-full ${color}`} />
+                  <span className="text-xs text-gray-400">{label}</span>
+                </div>
+                <div className="text-sm font-bold text-white">${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                <div className="text-xs text-gray-500">{pct.toFixed(1)}%</div>
               </div>
-              <div className="text-sm font-bold text-white">${cash.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-              <div className="text-xs text-gray-500">{cashPct.toFixed(1)}%</div>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-1">
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span className="text-xs text-gray-400">Crypto</span>
-              </div>
-              <div className="text-sm font-bold text-white">${invested.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-              <div className="text-xs text-gray-500">{investedPct.toFixed(1)}%</div>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1.5 mb-1">
-                <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
-                <span className="text-xs text-gray-400">Polymarket</span>
-              </div>
-              <div className="text-sm font-bold text-white">${poly.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-              <div className="text-xs text-gray-500">{polyPct.toFixed(1)}%</div>
-            </div>
+            ))}
           </div>
         </div>
 
-        {/* ── Open Positions ── */}
+        {/* Open Positions */}
         <div className="bg-gray-900 rounded-xl p-5 border border-gray-800">
-          <div className="text-sm font-semibold text-gray-300 mb-3">
-            Open Positions ({openTrades.length})
-          </div>
+          <div className="text-sm font-semibold text-gray-300 mb-3">Open Positions ({openTrades.length})</div>
           {openTrades.length === 0 ? (
             <div className="text-xs text-gray-600">No open positions</div>
           ) : (
@@ -336,29 +309,26 @@ export default function AgentDetail({ agentId, userId, onBack }) {
           )}
         </div>
 
-        {/* ── Coins Being Watched ── */}
+        {/* Coins Watched */}
         <div className="bg-gray-900 rounded-xl p-5 border border-gray-800">
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm font-semibold text-gray-300">Coins Watched</div>
-            <button
-              onClick={() => setEditingCoins(!editingCoins)}
-              className="text-xs text-blue-400 hover:text-blue-300"
-            >
+            <button onClick={() => setEditingCoins(!editingCoins)} className="text-xs text-blue-400 hover:text-blue-300">
               {editingCoins ? 'Cancel' : 'Edit'}
             </button>
           </div>
 
           {!editingCoins ? (
             <div className="flex flex-wrap gap-2">
-              {(Array.isArray(agent.coins) ? agent.coins : []).map((c) => (
+              {agentCoins.map((c) => (
                 <span key={c} className="text-xs bg-gray-800 border border-gray-700 text-gray-300 px-2.5 py-1 rounded-full">{c}</span>
               ))}
-              {(Array.isArray(agent.custom_coin_cas) ? agent.custom_coin_cas : []).map((ca) => (
+              {agentCAs.map((ca) => (
                 <span key={ca} className="text-xs bg-purple-900/40 border border-purple-700 text-purple-300 px-2.5 py-1 rounded-full">
                   CA: {ca.slice(0, 6)}…
                 </span>
               ))}
-              {(!agent.coins?.length && !agent.custom_coin_cas?.length) && (
+              {agentCoins.length === 0 && agentCAs.length === 0 && (
                 <span className="text-xs text-gray-600">None selected</span>
               )}
             </div>
@@ -368,11 +338,7 @@ export default function AgentDetail({ agentId, userId, onBack }) {
                 {COIN_OPTIONS.map((c) => (
                   <button
                     key={c}
-                    onClick={() =>
-                      setSelectedCoins((prev) =>
-                        prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
-                      )
-                    }
+                    onClick={() => setSelectedCoins((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c])}
                     className={`text-xs px-3 py-1.5 rounded-full border transition ${
                       selectedCoins.includes(c)
                         ? 'bg-blue-600 border-blue-500 text-white'
@@ -383,7 +349,6 @@ export default function AgentDetail({ agentId, userId, onBack }) {
                   </button>
                 ))}
               </div>
-
               <div>
                 <div className="text-xs text-gray-500 mb-2">Custom Contract Address (meme coins)</div>
                 <div className="flex gap-2">
@@ -393,9 +358,7 @@ export default function AgentDetail({ agentId, userId, onBack }) {
                     placeholder="Paste contract address..."
                     className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-600 outline-none focus:border-blue-500"
                   />
-                  <button onClick={addCustomCA} className="px-3 py-2 bg-purple-700 hover:bg-purple-600 rounded-lg text-xs text-white">
-                    Add
-                  </button>
+                  <button onClick={addCustomCA} className="px-3 py-2 bg-purple-700 hover:bg-purple-600 rounded-lg text-xs text-white">Add</button>
                 </div>
                 {customCAs.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-2">
@@ -408,19 +371,14 @@ export default function AgentDetail({ agentId, userId, onBack }) {
                   </div>
                 )}
               </div>
-
-              <button
-                onClick={saveCoins}
-                disabled={saving}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm text-white font-semibold disabled:opacity-50"
-              >
+              <button onClick={saveCoins} disabled={saving} className="w-full py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm text-white font-semibold disabled:opacity-50">
                 {saving ? 'Saving...' : 'Save Coins'}
               </button>
             </div>
           )}
         </div>
 
-        {/* ── Forum Sentiment Toggles ── */}
+        {/* Forum Sentiment */}
         <div className="bg-gray-900 rounded-xl p-5 border border-gray-800">
           <div className="text-sm font-semibold text-gray-300 mb-3">Forum Sentiment</div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -451,7 +409,7 @@ export default function AgentDetail({ agentId, userId, onBack }) {
           </div>
         </div>
 
-        {/* ── Polymarket Section ── */}
+        {/* Polymarket Section */}
         <div className="bg-gray-900 rounded-xl p-5 border border-purple-900/50">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -461,19 +419,13 @@ export default function AgentDetail({ agentId, userId, onBack }) {
                 <div className="text-xs text-gray-500">{openBets.length} open · {resolvedBets.length} resolved · Win rate: {polyWinRate === '—' ? 'No data yet' : `${polyWinRate}%`}</div>
               </div>
             </div>
-            <button
-              onClick={() => setShowBets(!showBets)}
-              className="text-xs text-purple-400 hover:text-purple-300"
-            >
+            <button onClick={() => setShowBets(!showBets)} className="text-xs text-purple-400 hover:text-purple-300">
               {showBets ? 'Hide' : 'Show all'}
             </button>
           </div>
 
-          {/* Open Bets */}
           {openBets.length === 0 ? (
-            <div className="text-xs text-gray-600 mb-4">
-              No open bets — agent will place bets automatically when running
-            </div>
+            <div className="text-xs text-gray-600 mb-4">No open bets — agent will place bets automatically when running</div>
           ) : (
             <div className="space-y-2 mb-4">
               {(showBets ? openBets : openBets.slice(0, 3)).map((bet) => (
@@ -490,7 +442,6 @@ export default function AgentDetail({ agentId, userId, onBack }) {
             </div>
           )}
 
-          {/* Resolved Bets (show when expanded) */}
           {showBets && resolvedBets.length > 0 && (
             <div className="space-y-2 mb-4">
               <div className="text-xs text-gray-500 font-semibold">Resolved</div>
@@ -501,7 +452,7 @@ export default function AgentDetail({ agentId, userId, onBack }) {
                     <span className={`font-bold ${bet.result === 'win' ? 'text-emerald-400' : 'text-red-400'}`}>
                       {bet.result === 'win' ? '✓ WIN' : '✗ LOSS'}
                     </span>
-                    <span className={`${bet.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    <span className={bet.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
                       {bet.pnl >= 0 ? '+' : ''}${bet.pnl?.toFixed(2)}
                     </span>
                     <span className="text-gray-500">{bet.outcome}</span>
@@ -511,13 +462,12 @@ export default function AgentDetail({ agentId, userId, onBack }) {
             </div>
           )}
 
-          {/* Live Markets Preview */}
           {polyMarkets.length > 0 && (
             <div>
               <div className="text-xs text-gray-500 font-semibold mb-2">Live Markets Agent Can Bet On</div>
               <div className="space-y-1.5">
                 {polyMarkets.slice(0, 4).map((m) => {
-                  const prices = m.outcomePrices || ['0.5', '0.5'];
+                  const prices = Array.isArray(m.outcomePrices) ? m.outcomePrices : ['0.5', '0.5'];
                   const yesProb = Math.round(parseFloat(prices[0]) * 100);
                   const noProb = Math.round(parseFloat(prices[1]) * 100);
                   return (
@@ -536,18 +486,12 @@ export default function AgentDetail({ agentId, userId, onBack }) {
           )}
         </div>
 
-        {/* ── Trade History ── */}
+        {/* Trade History */}
         <div className="bg-gray-900 rounded-xl p-5 border border-gray-800">
-          <button
-            onClick={() => setShowTrades(!showTrades)}
-            className="flex items-center justify-between w-full"
-          >
-            <div className="text-sm font-semibold text-gray-300">
-              Trade History ({closedTrades.length} closed)
-            </div>
+          <button onClick={() => setShowTrades(!showTrades)} className="flex items-center justify-between w-full">
+            <div className="text-sm font-semibold text-gray-300">Trade History ({closedTrades.length} closed)</div>
             <span className="text-gray-500 text-xs">{showTrades ? '▲ Hide' : '▼ Show'}</span>
           </button>
-
           {showTrades && (
             <div className="mt-4 space-y-2 max-h-96 overflow-y-auto">
               {closedTrades.length === 0 ? (
@@ -571,7 +515,7 @@ export default function AgentDetail({ agentId, userId, onBack }) {
           )}
         </div>
 
-        {/* ── Scan Log ── */}
+        {/* Scan Log */}
         {scanLog.length > 0 && (
           <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
             <div className="text-xs text-gray-500 font-semibold mb-2">Activity Log</div>

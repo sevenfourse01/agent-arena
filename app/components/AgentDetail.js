@@ -16,6 +16,13 @@ const TIMEFRAMES = [
   { label: '1W',  interval: '1h',  limit: 168 },
 ]
 
+const CHART_TYPES = [
+  { id: 'area',    label: 'Area'    },
+  { id: 'line',    label: 'Line'    },
+  { id: 'candles', label: 'Candles' },
+  { id: 'bars',    label: 'Bars'    },
+]
+
 const typeColors = {
   emerald: 'bg-emerald-50 text-emerald-800',
   amber:   'bg-amber-50 text-amber-800',
@@ -30,7 +37,6 @@ const COIN_MAP = {
   AVAX: 'AVAXUSDT', MATIC: 'MATICUSDT',
   DOGE: 'DOGEUSDT', PEPE: 'PEPEUSDT',
   WIF: 'WIFUSDT', BONK: 'BONKUSDT', FLOKI: 'FLOKIUSDT',
-  AGENT: 'SOLUSDT', MEME: 'SOLUSDT',
 }
 
 const ALL_COINS = {
@@ -43,7 +49,6 @@ const ALL_COINS = {
     { id:'MATIC', label:'Polygon',   icon:'⬟'  },
   ],
   'Meme Coins': [
-    { id:'AGENT', label:'$AGENT',    icon:'⚡' },
     { id:'DOGE',  label:'Dogecoin',  icon:'🐕' },
     { id:'PEPE',  label:'Pepe',      icon:'🐸' },
     { id:'WIF',   label:'dogwifhat', icon:'🎩' },
@@ -64,7 +69,7 @@ function formatPrice(n) {
   return '$' + n.toFixed(8)
 }
 
-function MiniChart({ symbol, tf }) {
+function MiniChart({ symbol, tf, chartType = 'area', trades = [] }) {
   const [candles, setCandles] = useState([])
   const [loading, setLoading] = useState(true)
   const [hovIdx, setHovIdx]   = useState(null)
@@ -75,7 +80,10 @@ function MiniChart({ symbol, tf }) {
       try {
         const res  = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${tf.interval}&limit=${tf.limit}`)
         const data = await res.json()
-        if (Array.isArray(data)) setCandles(data.map(d => ({ t:d[0], o:parseFloat(d[1]), h:parseFloat(d[2]), l:parseFloat(d[3]), c:parseFloat(d[4]) })))
+        if (Array.isArray(data)) setCandles(data.map(d => ({
+          t: d[0], o: parseFloat(d[1]), h: parseFloat(d[2]),
+          l: parseFloat(d[3]), c: parseFloat(d[4])
+        })))
       } catch {}
       setLoading(false)
     }
@@ -84,43 +92,121 @@ function MiniChart({ symbol, tf }) {
     return () => clearInterval(iv)
   }, [symbol, tf])
 
-  const W=500, H=160, padL=60, padR=8, padT=8, padB=24
-  const chartW=W-padL-padR, chartH=H-padT-padB
-  const closes = candles.map(c=>c.c)
-  const minP   = candles.length ? Math.min(...candles.map(c=>c.l))*0.999 : 0
-  const maxP   = candles.length ? Math.max(...candles.map(c=>c.h))*1.001 : 1
-  const range  = maxP-minP||1
-  const toX = i => padL + (i/Math.max(candles.length-1,1))*chartW
-  const toY = p => padT + chartH - ((p-minP)/range)*chartH
-  const linePath = closes.map((c,i)=>`${i===0?'M':'L'}${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(' ')
-  const areaPath = closes.length ? `${linePath} L${toX(closes.length-1).toFixed(1)},${(padT+chartH).toFixed(1)} L${toX(0).toFixed(1)},${(padT+chartH).toFixed(1)} Z` : ''
-  const isUp     = closes.length>=2 ? closes[closes.length-1]>=closes[0] : true
+  const W=600, H=220, padL=65, padR=8, padT=12, padB=28
+  const chartW = W-padL-padR, chartH = H-padT-padB
+  const closes = candles.map(c => c.c)
+  const minP   = candles.length ? Math.min(...candles.map(c => c.l)) * 0.999 : 0
+  const maxP   = candles.length ? Math.max(...candles.map(c => c.h)) * 1.001 : 1
+  const range  = maxP - minP || 1
+  const toX    = i => padL + (i / Math.max(candles.length - 1, 1)) * chartW
+  const toY    = p => padT + chartH - ((p - minP) / range) * chartH
+
+  const linePath  = closes.map((c, i) => `${i===0?'M':'L'}${toX(i).toFixed(1)},${toY(c).toFixed(1)}`).join(' ')
+  const areaPath  = closes.length ? `${linePath} L${toX(closes.length-1).toFixed(1)},${(padT+chartH).toFixed(1)} L${toX(0).toFixed(1)},${(padT+chartH).toFixed(1)} Z` : ''
+  const isUp      = closes.length >= 2 ? closes[closes.length-1] >= closes[0] : true
   const lineColor = isUp ? '#10b981' : '#ef4444'
-  const yTicks    = Array.from({length:4},(_,i)=>minP+(range*i)/3)
-  const hovCandle = hovIdx!==null ? candles[hovIdx] : null
+  const yTicks    = Array.from({length: 5}, (_, i) => minP + (range * i) / 4)
+  const hovCandle = hovIdx !== null ? candles[hovIdx] : null
+  const candleW   = candles.length > 1 ? Math.max(1.5, (chartW / candles.length) * 0.6) : 4
+
+  const chartStart = candles.length ? candles[0].t : 0
+  const chartEnd   = candles.length ? candles[candles.length-1].t : 0
+  const timeRange  = chartEnd - chartStart || 1
+  const tradeMarkers = trades.filter(t => {
+    const ts = new Date(t.created_at).getTime()
+    return ts >= chartStart && ts <= chartEnd + timeRange * 0.05
+  })
 
   return (
-    <div className="bg-gray-50 rounded-lg overflow-hidden" style={{position:'relative'}}>
-      {loading && <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}} className="text-xs text-gray-400 z-10">Loading...</div>}
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="none" style={{height:'160px',cursor:'crosshair',display:'block'}}
-        onMouseLeave={()=>setHovIdx(null)}
-        onMouseMove={e=>{
-          if(!candles.length) return
-          const rect=e.currentTarget.getBoundingClientRect()
-          const mx=((e.clientX-rect.left)/rect.width)*W
-          const idx=Math.round(((mx-padL)/chartW)*(candles.length-1))
-          setHovIdx(Math.max(0,Math.min(candles.length-1,idx)))
+    <div className="bg-gray-50 rounded-lg overflow-hidden relative">
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400 z-10 bg-gray-50">
+          Loading...
+        </div>
+      )}
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{height:'220px',cursor:'crosshair',display:'block'}}
+        onMouseLeave={() => setHovIdx(null)}
+        onMouseMove={e => {
+          if (!candles.length) return
+          const rect = e.currentTarget.getBoundingClientRect()
+          const mx   = ((e.clientX - rect.left) / rect.width) * W
+          const idx  = Math.round(((mx - padL) / chartW) * (candles.length - 1))
+          setHovIdx(Math.max(0, Math.min(candles.length - 1, idx)))
         }}>
-        {yTicks.map((p,i)=>(<line key={i} x1={padL} y1={toY(p).toFixed(1)} x2={padL+chartW} y2={toY(p).toFixed(1)} stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,4"/>))}
-        {areaPath && <path d={areaPath} fill={isUp?'#d1fae5':'#fee2e2'} opacity="0.4"/>}
-        {linePath  && <path d={linePath}  fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinejoin="round"/>}
-        {hovIdx!==null && hovCandle && (<>
-          <line x1={toX(hovIdx).toFixed(1)} y1={padT} x2={toX(hovIdx).toFixed(1)} y2={padT+chartH} stroke="#9ca3af" strokeWidth="1" strokeDasharray="3,3"/>
-          <circle cx={toX(hovIdx).toFixed(1)} cy={toY(hovCandle.c).toFixed(1)} r="3" fill={lineColor} stroke="white" strokeWidth="1.5"/>
-          <rect x={0} y={toY(hovCandle.c)-8} width={padL-2} height={16} rx="3" fill={lineColor}/>
-          <text x={(padL-2)/2} y={toY(hovCandle.c)+4} textAnchor="middle" fontSize="8" fill="white" fontWeight="700">{formatPrice(hovCandle.c)}</text>
-        </>)}
-        {yTicks.map((p,i)=>(<text key={i} x={padL-4} y={toY(p)+3} fontSize="8" fill="#9ca3af" textAnchor="end">{formatPrice(p)}</text>))}
+
+        {yTicks.map((p, i) => (
+          <line key={i} x1={padL} y1={toY(p).toFixed(1)} x2={padL+chartW} y2={toY(p).toFixed(1)}
+            stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,4"/>
+        ))}
+
+        {chartType === 'area' && areaPath && (
+          <path d={areaPath} fill={isUp ? '#d1fae5' : '#fee2e2'} opacity="0.4"/>
+        )}
+        {(chartType === 'area' || chartType === 'line') && linePath && (
+          <path d={linePath} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinejoin="round"/>
+        )}
+
+        {chartType === 'candles' && candles.map((c, i) => {
+          const x = toX(i)
+          const open = toY(c.o), close = toY(c.c), high = toY(c.h), low = toY(c.l)
+          const green = c.c >= c.o
+          const col   = green ? '#10b981' : '#ef4444'
+          return (
+            <g key={i}>
+              <line x1={x.toFixed(1)} y1={high.toFixed(1)} x2={x.toFixed(1)} y2={low.toFixed(1)} stroke={col} strokeWidth="1"/>
+              <rect x={(x - candleW/2).toFixed(1)} y={Math.min(open,close).toFixed(1)}
+                width={candleW.toFixed(1)} height={Math.max(Math.abs(close-open),1).toFixed(1)}
+                fill={col} opacity="0.9"/>
+            </g>
+          )
+        })}
+
+        {chartType === 'bars' && candles.map((c, i) => {
+          const x   = toX(i)
+          const col = c.c >= c.o ? '#10b981' : '#ef4444'
+          return (
+            <g key={i}>
+              <line x1={x.toFixed(1)} y1={toY(c.h).toFixed(1)} x2={x.toFixed(1)} y2={toY(c.l).toFixed(1)} stroke={col} strokeWidth="1.5"/>
+              <line x1={(x-3).toFixed(1)} y1={toY(c.o).toFixed(1)} x2={x.toFixed(1)} y2={toY(c.o).toFixed(1)} stroke={col} strokeWidth="1.5"/>
+              <line x1={x.toFixed(1)} y1={toY(c.c).toFixed(1)} x2={(x+3).toFixed(1)} y2={toY(c.c).toFixed(1)} stroke={col} strokeWidth="1.5"/>
+            </g>
+          )
+        })}
+
+        {tradeMarkers.map((trade, i) => {
+          const ts   = new Date(trade.created_at).getTime()
+          const xPct = (ts - chartStart) / timeRange
+          const x    = padL + xPct * chartW
+          const isBuy = trade.type === 'buy'
+          const col   = isBuy ? '#10b981' : '#ef4444'
+          const label = isBuy ? 'B' : 'S'
+          const yPos  = isBuy ? padT + chartH - 12 : padT + 12
+          return (
+            <g key={i}>
+              <line x1={x.toFixed(1)} y1={padT} x2={x.toFixed(1)} y2={padT+chartH}
+                stroke={col} strokeWidth="1" strokeDasharray="3,3" opacity="0.6"/>
+              <circle cx={x.toFixed(1)} cy={yPos.toFixed(1)} r="7" fill={col}/>
+              <text x={x.toFixed(1)} y={(yPos+3).toFixed(1)} textAnchor="middle"
+                fontSize="7" fill="white" fontWeight="bold">{label}</text>
+            </g>
+          )
+        })}
+
+        {hovIdx !== null && hovCandle && (
+          <>
+            <line x1={toX(hovIdx).toFixed(1)} y1={padT} x2={toX(hovIdx).toFixed(1)} y2={padT+chartH}
+              stroke="#9ca3af" strokeWidth="1" strokeDasharray="3,3"/>
+            <circle cx={toX(hovIdx).toFixed(1)} cy={toY(hovCandle.c).toFixed(1)} r="3"
+              fill={lineColor} stroke="white" strokeWidth="1.5"/>
+            <rect x={0} y={toY(hovCandle.c)-8} width={padL-2} height={16} rx="3" fill={lineColor}/>
+            <text x={(padL-2)/2} y={toY(hovCandle.c)+4} textAnchor="middle"
+              fontSize="8" fill="white" fontWeight="700">{formatPrice(hovCandle.c)}</text>
+          </>
+        )}
+
+        {yTicks.map((p, i) => (
+          <text key={i} x={padL-4} y={toY(p)+3} fontSize="8" fill="#9ca3af" textAnchor="end">{formatPrice(p)}</text>
+        ))}
         <line x1={padL} y1={padT} x2={padL} y2={padT+chartH} stroke="#e5e7eb" strokeWidth="1"/>
         <line x1={padL} y1={padT+chartH} x2={padL+chartW} y2={padT+chartH} stroke="#e5e7eb" strokeWidth="1"/>
       </svg>
@@ -142,6 +228,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [loading, setLoading]           = useState(false)
   const [trading, setTrading]           = useState(false)
   const [tf, setTf]                     = useState(TIMEFRAMES[1])
+  const [chartType, setChartType]       = useState('area')
   const [selectedCoin, setSelectedCoin] = useState(null)
   const [prices, setPrices]             = useState({})
   const [changes, setChanges]           = useState({})
@@ -415,6 +502,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         ← Back to all agents
       </button>
 
+      {/* Coin editor modal */}
       {showCoinEditor && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[85vh] flex flex-col">
@@ -527,6 +615,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         </div>
       )}
 
+      {/* Agent header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white font-bold text-lg">
@@ -556,6 +645,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         </div>
       </div>
 
+      {/* Stats */}
       <div className="grid grid-cols-4 gap-3 mb-4">
         {[
           ['Cash',         `$${cashBalance.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'available to trade', ''],
@@ -571,54 +661,90 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         ))}
       </div>
 
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-gray-500">Monitored coins</span>
-        <button onClick={() => { setEditCoins([...coins]); setShowCoinEditor(true) }}
-          className="text-xs text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1">
-          ✏️ Edit coins
-        </button>
-      </div>
-      <div className="grid grid-cols-4 gap-3 mb-4">
+      {/* Compact coin ticker strip */}
+      <div className="flex items-center mb-4 bg-white border border-gray-200 rounded-xl overflow-x-auto">
         {coins.map(c => {
           const isPos  = parseFloat(changes[c]||0) >= 0
+          const price  = prices[c]
+          const change = changes[c]
           const hasPos = openPositions.find(p => p.coin === c)
+          const isActive = activeCoin === c
           return (
-            <div key={c} onClick={()=>setSelectedCoin(c)}
-              className={`rounded-lg p-3 cursor-pointer border transition-all ${activeCoin===c?'bg-white border-emerald-400 shadow-sm':'bg-gray-50 border-gray-200 hover:border-gray-300'}`}>
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-xs font-medium text-gray-500">{c}/USDT</span>
-                <div className="flex items-center gap-1">
-                  {hasPos && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"/>}
-                  <span className={`text-xs font-medium ${isPos?'text-emerald-600':'text-red-500'}`}>
-                    {changes[c]?`${isPos?'+':''}${changes[c]}%`:'...'}
-                  </span>
-                </div>
+            <button key={c} onClick={() => setSelectedCoin(c)}
+              className={`flex items-center gap-3 px-4 py-3 border-r border-gray-100 last:border-r-0 flex-shrink-0 transition-all hover:bg-gray-50 ${isActive ? 'bg-emerald-50 border-b-2 border-b-emerald-500' : ''}`}>
+              <div className="flex items-center gap-1.5">
+                {hasPos && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"/>}
+                <span className="text-xs font-bold text-gray-700">{c}</span>
               </div>
-              <div className="text-lg font-semibold text-gray-900">{prices[c] ? `$${prices[c]}` : '...'}</div>
-              {hasPos && <div className="text-xs text-emerald-600 mt-0.5 font-medium">● Position open</div>}
-            </div>
+              <span className="text-sm font-semibold text-gray-900">
+                {price ? `$${price}` : <span className="text-gray-300">—</span>}
+              </span>
+              <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isPos ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                {change ? `${isPos?'+':''}${change}%` : '—'}
+              </span>
+            </button>
           )
         })}
+        <button onClick={() => { setEditCoins([...coins]); setShowCoinEditor(true) }}
+          className="flex items-center gap-1 px-4 py-3 text-xs text-emerald-600 hover:text-emerald-700 font-medium flex-shrink-0 ml-auto border-l border-gray-100">
+          ✏️ Edit
+        </button>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 flex flex-col gap-4">
 
+          {/* Chart with type + timeframe controls */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-semibold text-gray-900">{activeCoin}/USDT</span>
-              <div className="flex gap-1">
-                {TIMEFRAMES.map(t => (
-                  <button key={t.label} onClick={()=>setTf(t)}
-                    className={`text-xs px-2.5 py-1 rounded font-medium transition-all ${tf.label===t.label?'bg-emerald-500 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
-                    {t.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2">
+                {/* Chart type selector */}
+                <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+                  {CHART_TYPES.map(ct => (
+                    <button key={ct.id} onClick={() => setChartType(ct.id)}
+                      className={`text-xs px-2 py-1 rounded-md font-medium transition-all ${chartType===ct.id?'bg-white text-gray-900 shadow-sm':'text-gray-500 hover:text-gray-700'}`}>
+                      {ct.label}
+                    </button>
+                  ))}
+                </div>
+                {/* Timeframe selector */}
+                <div className="flex gap-1">
+                  {TIMEFRAMES.map(t => (
+                    <button key={t.label} onClick={() => setTf(t)}
+                      className={`text-xs px-2.5 py-1 rounded font-medium transition-all ${tf.label===t.label?'bg-emerald-500 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-            <MiniChart symbol={COIN_MAP[activeCoin]||'BTCUSDT'} tf={tf}/>
+            {/* Buy/sell marker legend */}
+            {trades.filter(t => t.coin === activeCoin).length > 0 && (
+              <div className="flex items-center gap-3 mb-2">
+                <div className="flex items-center gap-1">
+                  <div className="w-3 h-3 rounded-full bg-emerald-500 flex items-center justify-center">
+                    <span style={{fontSize:'6px',color:'white',fontWeight:'bold'}}>B</span>
+                  </div>
+                  <span className="text-xs text-gray-400">Buy</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-3 h-3 rounded-full bg-red-500 flex items-center justify-center">
+                    <span style={{fontSize:'6px',color:'white',fontWeight:'bold'}}>S</span>
+                  </div>
+                  <span className="text-xs text-gray-400">Sell / Close</span>
+                </div>
+              </div>
+            )}
+            <MiniChart
+              symbol={COIN_MAP[activeCoin] || 'BTCUSDT'}
+              tf={tf}
+              chartType={chartType}
+              trades={trades.filter(t => t.coin === activeCoin)}
+            />
           </div>
 
+          {/* Open positions */}
           {openPositions.length > 0 && (
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <div className="text-sm font-semibold text-gray-900 mb-3">Open positions</div>
@@ -645,6 +771,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </div>
           )}
 
+          {/* Thought log */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm font-semibold text-gray-900">Agent thought log</span>
@@ -677,6 +804,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </div>
           </div>
 
+          {/* Trade history */}
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
             <button onClick={() => setShowTradeLog(p => !p)}
               className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors">
@@ -711,7 +839,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                             </td>
                             <td className="py-2.5 px-3 text-xs font-bold text-gray-900">{t.coin}</td>
                             <td className="py-2.5 px-3">
-                              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${t.type==='BUY'?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-600'}`}>{t.type}</span>
+                              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${t.type==='BUY'||t.type==='buy'?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-600'}`}>{t.type?.toUpperCase()}</span>
                             </td>
                             <td className="py-2.5 px-3 text-xs text-gray-700 font-mono">{formatPrice(t.entry_price)}</td>
                             <td className="py-2.5 px-3 text-xs text-gray-700 font-mono">{t.exit_price ? formatPrice(t.exit_price) : '—'}</td>
@@ -733,8 +861,10 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
           </div>
         </div>
 
+        {/* Right column */}
         <div className="flex flex-col gap-4">
 
+          {/* Agent prompt */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-gray-900">Agent prompt</span>
@@ -748,6 +878,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </button>
           </div>
 
+          {/* Risk settings */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-3">Risk settings</div>
             {[
@@ -766,6 +897,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             ))}
           </div>
 
+          {/* Portfolio — 3-way split */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-3">Portfolio</div>
             <div className="flex justify-between text-xs mb-1.5">
@@ -803,6 +935,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             </div>
           </div>
 
+          {/* Information sources */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-1">Information sources</div>
             <p className="text-xs text-gray-400 mb-3">Enable social feeds your agent reads before every trade decision.</p>
@@ -827,6 +960,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             {savingForums && <p className="text-xs text-emerald-500 mt-2">Saved ✓</p>}
           </div>
 
+          {/* Polymarket */}
           <div className="bg-white border border-purple-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm font-semibold text-gray-900">🎯 Polymarket bets</span>
@@ -892,6 +1026,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             )}
           </div>
 
+          {/* Agent wallet */}
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-sm font-semibold text-gray-900 mb-2">Agent wallet</div>
             <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between mb-2">

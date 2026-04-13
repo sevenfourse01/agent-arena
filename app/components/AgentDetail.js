@@ -325,13 +325,13 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       } else if (data.action === 'CLOSE') {
         const pnl = data.trade?.pnl || 0
         setLog(prev => [{ color: pnl >= 0 ? 'emerald' : 'red', label:'Position closed', time:now,
-          msg:`Closed ${data.coin} position at ${formatPrice(data.price)} — PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
+          msg:`Closed ${data.coin} position at ${formatPrice(data.price)} — PnL: ${pnl >= 0 ? '+' : ''}$${Number(pnl).toFixed(2)}`,
           reason:data.reasoning }, ...prev])
         const { data: ua } = await supabase.from('agents').select('*').eq('id', agent.id).single()
         if (ua) setAgent(ua)
       } else {
         setLog(prev => [{ color: data.action === 'BUY' ? 'emerald' : 'red', label:`${data.action} executed`, time:now,
-          msg:`${data.action} ${data.coin} at ${formatPrice(data.price)} — ${data.amount?.toFixed(4)} units · Confidence: ${data.confidence}/10`,
+          msg:`${data.action} ${data.coin} at ${formatPrice(data.price)} — ${Number(data.amount||0).toFixed(4)} units · Confidence: ${data.confidence||0}/10`,
           reason:data.reasoning }, ...prev])
         const { data: ua } = await supabase.from('agents').select('*').eq('id', agent.id).single()
         if (ua) setAgent(ua)
@@ -341,7 +341,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         const b = data.polymarket
         setLog(prev => [{ color:'purple', label:'Polymarket bet', time:now,
           msg:`Bet $${b.stake} on "${b.market?.slice(0,50)}..."`,
-          reason:`Outcome: ${b.outcome} · Odds: ${(b.odds*100).toFixed(0)}% · Potential payout: $${b.potential_payout?.toFixed(2)}` }, ...prev])
+          reason:`Outcome: ${b.outcome} · Odds: ${(Number(b.odds||0)*100).toFixed(0)}% · Potential payout: $${Number(b.potential_payout||0).toFixed(2)}` }, ...prev])
         loadPolyBets()
       }
       if (data.fearGreed) {
@@ -448,17 +448,21 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     setLoading(false)
   }
 
-  const ret            = parseFloat(agent.total_return || 0)
+  const ret            = parseFloat(agent.total_return || 0) || 0
   const portfolioValue = agent.portfolio_value || 10000
-  const cashBalance    = parseFloat(agent.cash_balance ?? portfolioValue)
-  const investedVal    = parseFloat(agent.invested_value ?? 0)
-  const polyBalance    = parseFloat(agent.polymarket_balance ?? 0)
+  const cashBalance    = parseFloat(agent.cash_balance ?? portfolioValue) || 0
+  const investedVal    = parseFloat(agent.invested_value ?? 0) || 0
+  const polyBalance    = parseFloat(agent.polymarket_balance ?? 0) || 0
 
-  const totalPnL = openPositions.reduce((sum, pos) => {
-    const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || 0
-    if (!currentPrice) return sum
-    return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
-  }, 0)
+  const totalPnL = (() => {
+    try {
+      return openPositions.reduce((sum, pos) => {
+        const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || 0
+        if (!currentPrice || !pos.entry_price || !pos.amount) return sum
+        return sum + (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
+      }, 0) || 0
+    } catch { return 0 }
+  })()
 
   const openBets     = polyBets.filter(b => b.status === 'open')
   const resolvedBets = polyBets.filter(b => b.status === 'resolved')
@@ -650,7 +654,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         {[
           ['Cash',         `$${cashBalance.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'available to trade', ''],
           ['Invested',     `$${investedVal.toLocaleString('en-US',{maximumFractionDigits:0})}`, 'in open positions', investedVal > 0 ? 'text-emerald-600' : ''],
-          ['Total return', `${ret>=0?'+':''}${ret.toFixed(1)}%`, 'since start', ret>=0?'text-emerald-600':'text-red-500'],
+          ['Total return', `${ret>=0?'+':''}${Number(ret).toFixed(1)}%`, 'since start', ret>=0?'text-emerald-600':'text-red-500'],
           ['Open PnL',     `${totalPnL>=0?'+':''}$${Number(totalPnL).toFixed(2)}`, 'unrealised', totalPnL>=0?'text-emerald-600':'text-red-500'],
         ].map(([l,v,s,c])=>(
           <div key={l} className="bg-gray-100 rounded-lg p-3">
@@ -749,16 +753,20 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
             <div className="bg-white border border-gray-200 rounded-xl p-4">
               <div className="text-sm font-semibold text-gray-900 mb-3">Open positions</div>
               {openPositions.map((pos, i) => {
-                const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || pos.entry_price
-                const pnl = (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
-                const pnlPct = ((pnl / (pos.entry_price * pos.amount)) * 100).toFixed(2)
+                const currentPrice = parseFloat((prices[pos.coin]||'0').toString().replace(/,/g,'')) || pos.entry_price || 0
+                const pnl = pos.entry_price && pos.amount
+                  ? (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
+                  : 0
+                const pnlPct = pos.entry_price && pos.amount
+                  ? ((pnl / (pos.entry_price * pos.amount)) * 100).toFixed(2)
+                  : '0.00'
                 return (
                   <div key={i} className="flex items-center justify-between py-2.5 border-b border-gray-100 last:border-0">
                     <div className="flex items-center gap-2">
                       <span className={`text-xs font-bold px-2 py-0.5 rounded ${pos.type==='BUY'?'bg-emerald-50 text-emerald-700':'bg-red-50 text-red-600'}`}>{pos.type}</span>
                       <div>
                         <div className="text-xs font-semibold text-gray-900">{pos.coin}/USDT</div>
-                        <div className="text-xs text-gray-400">{pos.amount.toFixed(4)} units @ {formatPrice(pos.entry_price)}</div>
+                        <div className="text-xs text-gray-400">{Number(pos.amount||0).toFixed(4)} units @ {formatPrice(pos.entry_price)}</div>
                       </div>
                     </div>
                     <div className="text-right">
@@ -979,8 +987,8 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                     <div className="text-xs text-purple-800 font-medium mb-1 line-clamp-2">{bet.question}</div>
                     <div className="flex flex-wrap gap-2 text-xs text-gray-500">
                       <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-semibold">{bet.outcome}</span>
-                      <span>Stake: <b className="text-gray-700">${bet.stake?.toFixed(0)}</b></span>
-                      <span>Payout: <b className="text-emerald-600">${bet.potential_payout?.toFixed(0)}</b></span>
+                      <span>Stake: <b className="text-gray-700">${Number(bet.stake||0).toFixed(0)}</b></span>
+                      <span>Payout: <b className="text-emerald-600">${Number(bet.potential_payout||0).toFixed(0)}</b></span>
                     </div>
                   </div>
                 ))}
@@ -994,7 +1002,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                   <div key={bet.id} className={`rounded-lg p-2 border text-xs ${bet.result==='win'?'bg-emerald-50 border-emerald-200':'bg-red-50 border-red-200'}`}>
                     <div className="flex items-center gap-2">
                       <span className={`font-bold ${bet.result==='win'?'text-emerald-600':'text-red-500'}`}>{bet.result==='win'?'✓ WIN':'✗ LOSS'}</span>
-                      <span className={bet.pnl>=0?'text-emerald-600':'text-red-500'}>{bet.pnl>=0?'+':''}${bet.pnl?.toFixed(2)}</span>
+                      <span className={bet.pnl>=0?'text-emerald-600':'text-red-500'}>{bet.pnl>=0?'+':''}${Number(bet.pnl||0).toFixed(2)}</span>
                     </div>
                     <div className="text-gray-500 truncate mt-0.5">{bet.question}</div>
                   </div>

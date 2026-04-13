@@ -7,6 +7,11 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 )
 
+function safeNum(val, fallback = 0) {
+  const n = Number(val)
+  return (isNaN(n) || !isFinite(n)) ? fallback : n
+}
+
 const COIN_COLORS = {
   BTC:   'bg-amber-100 text-amber-700',
   ETH:   'bg-blue-100 text-blue-700',
@@ -25,12 +30,12 @@ const COIN_COLORS = {
 }
 
 function AgentCard({ agent, onClick }) {
-  const ret         = parseFloat(agent.total_return || 0)
+  const ret         = safeNum(agent.total_return)
   const isPos       = ret >= 0
   const coins       = Array.isArray(agent.coins) ? agent.coins : []
-  const cash        = parseFloat(agent.cash_balance ?? agent.portfolio_value ?? 10000)
-  const invested    = parseFloat(agent.invested_value ?? 0)
-  const total       = cash + invested
+  const cash        = safeNum(agent.cash_balance ?? agent.portfolio_value ?? 10000)
+  const invested    = safeNum(agent.invested_value)
+  const total       = cash + invested || 1
   const cashPct     = total > 0 ? Math.round((cash / total) * 100) : 100
   const investedPct = 100 - cashPct
 
@@ -65,7 +70,7 @@ function AgentCard({ agent, onClick }) {
         </div>
         <div className="bg-gray-50 rounded-lg p-2 text-center">
           <div className="text-xs text-gray-400 mb-0.5">Win rate</div>
-          <div className="text-sm font-bold text-gray-900">{agent.win_rate || 0}%</div>
+          <div className="text-sm font-bold text-gray-900">{safeNum(agent.win_rate)}%</div>
         </div>
       </div>
 
@@ -82,7 +87,7 @@ function AgentCard({ agent, onClick }) {
           </div>
         </div>
         <div className="flex justify-between text-xs text-gray-300 mt-0.5">
-          <span>Total: ${total.toLocaleString('en-US', {maximumFractionDigits:0})}</span>
+          <span>Total: ${(cash + invested).toLocaleString('en-US', {maximumFractionDigits:0})}</span>
         </div>
       </div>
 

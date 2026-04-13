@@ -61,11 +61,19 @@ const ALL_COINS_FLAT = Object.entries(ALL_COINS).flatMap(([cat, coins]) =>
   coins.map(c => ({ ...c, category: cat }))
 )
 
-function formatPrice(n) {
-  if (!n && n !== 0) return '...'
-  if (n >= 1000)  return '$' + n.toLocaleString('en-US', { minimumFractionDigits:0, maximumFractionDigits:0 })
-  if (n >= 1)     return '$' + n.toFixed(2)
-  if (n >= 0.01)  return '$' + n.toFixed(4)
+function safeNum(val, fallback = 0) {
+  const num = Number(val)
+  return (isNaN(num) || !isFinite(num)) ? fallback : num
+}
+
+function formatPrice(val) {
+  if (val === null || val === undefined) return '...'
+  const n = Number(val)
+  if (isNaN(n) || !isFinite(n)) return '$0.00'
+  if (n === 0) return '$0.00'
+  if (n >= 1000) return '$' + n.toLocaleString('en-US', { minimumFractionDigits:0, maximumFractionDigits:0 })
+  if (n >= 1)    return '$' + n.toFixed(2)
+  if (n >= 0.01) return '$' + n.toFixed(4)
   return '$' + n.toFixed(8)
 }
 
@@ -467,7 +475,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const openBets     = polyBets.filter(b => b.status === 'open')
   const resolvedBets = polyBets.filter(b => b.status === 'resolved')
   const polyWins     = resolvedBets.filter(b => b.result === 'win').length
-  const polyWinRate  = resolvedBets.length > 0 ? ((polyWins / resolvedBets.length) * 100).toFixed(0) : '—'
+  const polyWinRate  = resolvedBets.length > 0 ? safeNum((polyWins / resolvedBets.length) * 100).toFixed(0) : '—'
 
   const filteredCoins = coinSearch.trim() && !isCA(coinSearch)
     ? ALL_COINS_FLAT.filter(c =>
@@ -561,9 +569,9 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                           <div className="text-xs text-gray-500">{caResult.id} · {caResult.chain} · {caResult.dex}</div>
                         </div>
                         <div className="text-right">
-                          <div className="text-sm font-bold text-gray-900">${caResult.price < 0.01 ? caResult.price.toFixed(8) : caResult.price.toFixed(4)}</div>
+                          <div className="text-sm font-bold text-gray-900">${safeNum(caResult.price) < 0.01 ? safeNum(caResult.price).toFixed(8) : safeNum(caResult.price).toFixed(4)}</div>
                           <div className={`text-xs font-medium ${caResult.change24h >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                            {caResult.change24h >= 0 ? '+' : ''}{caResult.change24h.toFixed(2)}% 24h
+                            {caResult.change24h >= 0 ? '+' : ''}{safeNum(caResult.change24h).toFixed(2)}% 24h
                           </div>
                         </div>
                       </div>
@@ -758,7 +766,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                   ? (currentPrice - pos.entry_price) * pos.amount * (pos.type==='BUY'?1:-1)
                   : 0
                 const pnlPct = pos.entry_price && pos.amount
-                  ? ((pnl / (pos.entry_price * pos.amount)) * 100).toFixed(2)
+                  ? safeNum((pnl / (pos.entry_price * pos.amount)) * 100).toFixed(2)
                   : '0.00'
                 return (
                   <div key={i} className="flex items-center justify-between py-2.5 border-b border-gray-100 last:border-0">
@@ -925,9 +933,9 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                 {(() => {
                   const total = (cashBalance + investedVal + polyBalance) || 1
                   return <>
-                    <div style={{width:`${(cashBalance/total*100).toFixed(1)}%`}} className="bg-gray-300"/>
-                    <div style={{width:`${(investedVal/total*100).toFixed(1)}%`}} className="bg-emerald-500"/>
-                    <div style={{width:`${(polyBalance/total*100).toFixed(1)}%`}} className="bg-purple-500"/>
+                    <div style={{width:`${safeNum(cashBalance/total*100).toFixed(1)}%`}} className="bg-gray-300"/>
+                    <div style={{width:`${safeNum(investedVal/total*100).toFixed(1)}%`}} className="bg-emerald-500"/>
+                    <div style={{width:`${safeNum(polyBalance/total*100).toFixed(1)}%`}} className="bg-purple-500"/>
                   </>
                 })()}
               </div>

@@ -249,6 +249,93 @@ Return ONLY the JSON array. No text before or after.`
   }
 }
 
+// Research a Polymarket question using Claude + web search before betting
+async function researchPolymarketBet(market, fearGreed) {
+  try {
+    const question = market.question || ''
+    const outcomes = market.outcomes || ['Yes', 'No']
+    const prices   = market.outcomePrices || ['0.5', '0.5']
+    const oddsStr  = outcomes.map((o, i) => `${o}: ${(safeNum(prices[i]) * 100).toFixed(0)}%`).join(', ')
+
+    const prompt = `You are a prediction market analyst with access to web search. Research this crypto prediction market question thoroughly before deciding.
+
+QUESTION: "${question}"
+CURRENT ODDS: ${oddsStr}
+FEAR & GREED: ${fearGreed.value} (${fearGreed.value_classification})
+
+Search for recent news and data relevant to this question. Then decide:
+1. Which outcome is most likely based on current evidence?
+2. Is the market mispriced (is one outcome undervalued)?
+
+Respond with ONLY this JSON (no other text):
+{"outcome":"${outcomes[0]}","confidence":7,"reasoning":"brief reason citing evidence","bet":true}
+
+Rules:
+- Use web search to find relevant recent news first
+- Only set bet:true if confidence >= 7
+- Pick the outcome you genuinely believe is more likely based on evidence`
+
+    // Use web search tool for research
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    // Extract the final text response (after tool use)
+    const textBlock = response.content.find(b => b.type === 'text')
+    const text = textBlock?.text || '{}'
+    const jsonMatch = text.match(/\{[^{}]*\}/)
+    if (!jsonMatch) return { outcome: null, odds: 0.5, confidence: 0 }
+
+    const decision = JSON.parse(jsonMatch[0])
+    if (!decision.bet || decision.confidence < 7) return { outcome: null, odds: 0.5, confidence: 0 }
+
+    const idx  = outcomes.indexOf(decision.outcome)
+    const odds = idx >= 0 ? safeNum(prices[idx], 0.5) : 0.5
+
+    return {
+      outcome:    decision.outcome,
+      odds,
+      confidence: decision.confidence,
+      reasoning:  decision.reasoning || 'Researched via web search',
+    }
+  } catch (err) {
+    console.error('Polymarket research error:', err.message)
+    return { outcome: null, odds: 0.5, confidence: 0 }
+  }
+}
+If confidence < 6, set bet to false. Only bet if you have a genuine edge.`
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 256,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const text = response.content[0]?.text || '{}'
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return { outcome: null, odds: 0.5, confidence: 0 }
+
+    const decision = JSON.parse(jsonMatch[0])
+    if (!decision.bet || decision.confidence < 6) return { outcome: null, odds: 0.5, confidence: 0 }
+
+    const idx  = outcomes.indexOf(decision.outcome)
+    const odds = idx >= 0 ? safeNum(prices[idx], 0.5) : 0.5
+
+    return {
+      outcome:    decision.outcome,
+      odds,
+      confidence: decision.confidence,
+      reasoning:  decision.reasoning,
+    }
+  } catch (err) {
+    console.error('Polymarket research error:', err.message)
+    return { outcome: null, odds: 0.5, confidence: 0 }
+  }
+}
+
 export async function POST(request) {
   try {
     const authHeader = request.headers.get('authorization') || ''
@@ -274,7 +361,49 @@ export async function POST(request) {
       portfolioValue: clientPortfolioValue = 10000,
       prompt: agentPrompt = '',
       forumSettings = {},
+      manualAction = null,
     } = body
+
+    // ── Handle manual buy/close from UI ────────────────────────────────
+    if (manualAction) {
+      const { action, coin, price, amount_pct = 10 } = manualAction
+      const symbol = coin?.toUpperCase()
+
+      const { data: agentManual } = await supabase
+        .from('agents').select('cash_balance, invested_value, polymarket_balance, portfolio_value')
+        .eq('id', agentId).maybeSingle()
+
+      let cash     = safeNum(agentManual?.cash_balance, 10000)
+      let invested = safeNum(agentManual?.invested_value, 0)
+      let poly     = safeNum(agentManual?.polymarket_balance, 0)
+
+      if (action === 'BUY') {
+        const tradeUSD = (cash * amount_pct) / 100
+        const units    = tradeUSD / price
+        if (cash >= tradeUSD && units > 0) {
+          cash    -= tradeUSD
+          invested += tradeUSD
+          await supabase.from('trades').insert({
+            agent_id: agentId, user_id: userId, coin: symbol, type: 'buy',
+            entry_price: parseFloat(price.toFixed(8)), amount: parseFloat(units.toFixed(8)),
+            status: 'open', reasoning: `Manual BUY @ $${price.toFixed(4)}`,
+          })
+        }
+      }
+
+      const { data: stillOpen } = await supabase
+        .from('trades').select('entry_price, amount').eq('agent_id', agentId).eq('status', 'open')
+      invested = (stillOpen || []).reduce((s, t) => s + safeNum(t.entry_price) * safeNum(t.amount), 0)
+
+      const total = cash + invested + poly
+      const ret   = parseFloat((((total - 10000) / 10000) * 100).toFixed(2))
+      await supabase.from('agents').update({
+        cash_balance: parseFloat(cash.toFixed(4)), invested_value: parseFloat(invested.toFixed(4)),
+        portfolio_value: parseFloat(total.toFixed(4)), total_return: ret,
+      }).eq('id', agentId)
+
+      return NextResponse.json({ success: true, portfolio: { cash, invested, polymarket: poly, total }, action, coin: symbol, price })
+    }
 
     const { data: agentRow } = await supabase
       .from('agents')
@@ -520,12 +649,15 @@ export async function POST(request) {
           (Date.now() - new Date(b.created_at).getTime()) / 86400000 <= 7
         )
 
-        if (activeBets.length < 2 && tradeResults.length > 0 && Math.random() < 0.15 && cashBalance > 200) {
+        if (activeBets.length < 2 && Math.random() < 0.2 && cashBalance > 200) {
           const market  = markets[Math.floor(Math.random() * markets.length)]
-          const idx     = Math.random() < 0.5 ? 0 : 1
-          const outcome = (market.outcomes || ['Yes','No'])[idx]
-          const odds    = safeNum((market.outcomePrices || ['0.5','0.5'])[idx], 0.5)
-          const stake   = parseFloat(Math.min(cashBalance * 0.03, 200).toFixed(2))
+
+          // Research the market question using Claude before betting
+          const betResearch = await researchPolymarketBet(market, fearGreed)
+          if (!betResearch.outcome) { break }
+          const { outcome, odds } = betResearch
+
+          const stake   = parseFloat(Math.min(cashBalance * 0.03, 150).toFixed(2))
           const payout  = parseFloat((stake / Math.max(odds, 0.01)).toFixed(2))
 
           cashBalance -= stake; polyBalance += stake

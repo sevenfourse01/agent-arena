@@ -132,13 +132,15 @@ function MiniChart({ symbol, tf, chartType = 'area', trades = [] }) {
           Loading...
         </div>
       )}
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{height:'220px',cursor:'crosshair',display:'block'}}
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{cursor:'crosshair',display:'block'}}
         onMouseLeave={() => setHovIdx(null)}
         onMouseMove={e => {
           if (!candles.length) return
-          const rect = e.currentTarget.getBoundingClientRect()
-          const mx   = ((e.clientX - rect.left) / rect.width) * W
-          const idx  = Math.round(((mx - padL) / chartW) * (candles.length - 1))
+          const rect   = e.currentTarget.getBoundingClientRect()
+          // Use actual rendered dimensions for accurate mapping
+          const scaleX = W / rect.width
+          const mx     = (e.clientX - rect.left) * scaleX
+          const idx    = Math.round(((mx - padL) / chartW) * (candles.length - 1))
           setHovIdx(Math.max(0, Math.min(candles.length - 1, idx)))
         }}>
 
@@ -262,6 +264,8 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [polyBets, setPolyBets]         = useState([])
   const [polyMarkets, setPolyMarkets]   = useState([])
   const [showBets, setShowBets]         = useState(false)
+  const [manualLoading, setManualLoading] = useState({})
+  const [manualLoading, setManualLoading] = useState({})
 
   const tradingRef   = useRef(false)
   const intervalRef  = useRef(null)
@@ -324,6 +328,179 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       const data = await res.json()
       setPolyMarkets(data.markets || [])
     } catch {}
+  }
+
+  async function manualBuy(symbol) {
+    setManualLoading(prev => ({ ...prev, [symbol]: 'buying' }))
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const cachedPrices = getRawPrices()
+      const res = await fetch('/api/trade/manual', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`,
+        },
+        body: JSON.stringify({
+          agentId: agent.id, userId: user.id,
+          action: 'BUY', coin: symbol,
+          cachedPrices,
+          portfolioValue: agent.portfolio_value,
+        }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        if (data.portfolio) {
+          setAgent(prev => ({
+            ...prev,
+            cash_balance:    data.portfolio.cash,
+            invested_value:  data.portfolio.invested,
+            portfolio_value: data.portfolio.total,
+          }))
+        }
+        const { data: newTrades } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
+        setTrades(newTrades || [])
+        setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
+      }
+    } catch (err) { console.error('Manual buy error:', err) }
+    setManualLoading(prev => ({ ...prev, [symbol]: null }))
+  }
+
+  async function manualClose(tradeId, symbol) {
+    setManualLoading(prev => ({ ...prev, [tradeId]: 'closing' }))
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const cachedPrices = getRawPrices()
+      const res = await fetch('/api/trade/manual', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`,
+        },
+        body: JSON.stringify({
+          agentId: agent.id, userId: user.id,
+          action: 'CLOSE', coin: symbol, tradeId,
+          cachedPrices,
+          portfolioValue: agent.portfolio_value,
+        }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        if (data.portfolio) {
+          setAgent(prev => ({
+            ...prev,
+            cash_balance:    data.portfolio.cash,
+            invested_value:  data.portfolio.invested,
+            portfolio_value: data.portfolio.total,
+          }))
+        }
+        const { data: newTrades } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
+        setTrades(newTrades || [])
+        setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
+      }
+    } catch (err) { console.error('Manual close error:', err) }
+    setManualLoading(prev => ({ ...prev, [tradeId]: null }))
+  }
+
+  async function manualBuy(coin) {
+    const symbol = coin.toUpperCase()
+    const rawPrice = prices[symbol]
+    if (!rawPrice) { alert('No price available for ' + symbol); return }
+    const price = parseFloat(rawPrice.toString().replace(/,/g,''))
+    if (!price || price <= 0) { alert('Invalid price for ' + symbol); return }
+
+    setManualLoading(prev => ({ ...prev, [symbol]: 'buying' }))
+    const { data: { session } } = await supabase.auth.getSession()
+
+    try {
+      const res = await fetch('/api/trade', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`,
+        },
+        body: JSON.stringify({
+          agentId: agent.id, userId: user.id,
+          manualAction: { action: 'BUY', coin: symbol, price, amount_pct: 10 },
+          coins: [], riskSettings: agent.risk_settings || {},
+          cachedPrices: {}, openPositions, portfolioValue: agent.portfolio_value,
+        }),
+      })
+      const data = await res.json()
+      if (data.portfolio) {
+        setAgent(prev => ({
+          ...prev,
+          cash_balance:    safeNum(data.portfolio.cash),
+          invested_value:  safeNum(data.portfolio.invested),
+          portfolio_value: safeNum(data.portfolio.total),
+          total_return:    parseFloat((((safeNum(data.portfolio.total) - 10000) / 10000) * 100).toFixed(2)),
+        }))
+      }
+      const { data: newTrades } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
+      setTrades(newTrades || [])
+      setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
+      const now = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
+      setLog(prev => [{ color:'emerald', label:'Manual BUY', time:now, msg:`Manually bought ${symbol} @ $${price.toFixed(4)}`, reason:'Manual trade executed by user' }, ...prev])
+    } catch (err) {
+      alert('Buy failed: ' + err.message)
+    }
+    setManualLoading(prev => ({ ...prev, [symbol]: null }))
+  }
+
+  async function manualClose(pos) {
+    const symbol = pos.coin
+    const rawPrice = prices[symbol]
+    if (!rawPrice && !pos.entry_price) { alert('No price available'); return }
+    const price = rawPrice ? parseFloat(rawPrice.toString().replace(/,/g,'')) : pos.entry_price
+
+    setManualLoading(prev => ({ ...prev, [symbol]: 'closing' }))
+    const { data: { session } } = await supabase.auth.getSession()
+
+    try {
+      const entryPrice = safeNum(pos.entry_price, price)
+      const posUnits   = safeNum(pos.amount, 0)
+      const pnl        = (price - entryPrice) * posUnits
+
+      await supabase.from('trades').update({
+        status: 'closed',
+        exit_price: parseFloat(price.toFixed(8)),
+        pnl: parseFloat(pnl.toFixed(4)),
+        closed_at: new Date().toISOString(),
+        reasoning: `Manual close by user @ $${price.toFixed(4)}`,
+      }).eq('id', pos.id)
+
+      const returned   = (entryPrice * posUnits) + pnl
+      const newCash    = safeNum(agent.cash_balance) + returned
+      const newInvested = Math.max(0, safeNum(agent.invested_value) - (entryPrice * posUnits))
+      const newTotal   = newCash + newInvested + safeNum(agent.polymarket_balance)
+
+      await supabase.from('agents').update({
+        cash_balance:   parseFloat(newCash.toFixed(4)),
+        invested_value: parseFloat(newInvested.toFixed(4)),
+        portfolio_value: parseFloat(newTotal.toFixed(4)),
+        total_return:   parseFloat((((newTotal - 10000) / 10000) * 100).toFixed(2)),
+      }).eq('id', agent.id)
+
+      setAgent(prev => ({
+        ...prev,
+        cash_balance:   newCash,
+        invested_value: newInvested,
+        portfolio_value: newTotal,
+        total_return:   parseFloat((((newTotal - 10000) / 10000) * 100).toFixed(2)),
+      }))
+
+      const { data: newTrades } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
+      setTrades(newTrades || [])
+      setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
+
+      const now = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
+      setLog(prev => [{ color: pnl >= 0 ? 'emerald' : 'red', label:'Manual CLOSE', time:now,
+        msg:`Manually closed ${symbol} @ $${price.toFixed(4)} — P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
+        reason:'Manual trade executed by user' }, ...prev])
+    } catch (err) {
+      alert('Close failed: ' + err.message)
+    }
+    setManualLoading(prev => ({ ...prev, [symbol]: null }))
   }
 
   async function runTradeScan() {
@@ -732,6 +909,15 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
               <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${isPos ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
                 {change ? `${isPos?'+':''}${change}%` : '—'}
               </span>
+              {!openPositions.find(p => p.coin === c) && COIN_MAP[c] && (
+                <button
+                  onClick={e => { e.stopPropagation(); manualBuy(c) }}
+                  disabled={!!manualLoading[c]}
+                  className="text-xs bg-emerald-500 hover:bg-emerald-600 text-white px-2 py-0.5 rounded font-semibold disabled:opacity-50 transition"
+                >
+                  {manualLoading[c] === 'buying' ? '...' : 'Buy'}
+                </button>
+              )}
             </button>
           )
         })}
@@ -831,9 +1017,18 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                         <div className="text-xs text-gray-400">{Number(pos.amount||0).toFixed(4)} units @ {formatPrice(pos.entry_price)}</div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className={`text-sm font-bold ${pnl>=0?'text-emerald-600':'text-red-500'}`}>{pnl>=0?'+':''}{formatPrice(Math.abs(pnl))}</div>
-                      <div className={`text-xs ${pnl>=0?'text-emerald-500':'text-red-400'}`}>{pnl>=0?'+':''}{pnlPct}%</div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <div className={`text-sm font-bold ${pnl>=0?'text-emerald-600':'text-red-500'}`}>{pnl>=0?'+':''}{formatPrice(Math.abs(pnl))}</div>
+                        <div className={`text-xs ${pnl>=0?'text-emerald-500':'text-red-400'}`}>{pnl>=0?'+':''}{pnlPct}%</div>
+                      </div>
+                      <button
+                        onClick={() => manualClose(pos.id, pos.coin)}
+                        disabled={!!manualLoading[pos.id]}
+                        className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-2.5 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
+                      >
+                        {manualLoading[pos.id] === 'closing' ? '...' : 'Close'}
+                      </button>
                     </div>
                   </div>
                 )

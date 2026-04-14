@@ -182,9 +182,14 @@ function MiniChart({ symbol, tf, chartType = 'area', trades = [] }) {
         })}
 
         {tradeMarkers.map((trade, i) => {
-          const ts   = new Date(trade.created_at).getTime()
-          const xPct = (ts - chartStart) / timeRange
-          const x    = padL + xPct * chartW
+          const ts = new Date(trade.created_at).getTime()
+          let nearestIdx = 0
+          let minDiff = Infinity
+          candles.forEach((c, idx) => {
+            const diff = Math.abs(c.t - ts)
+            if (diff < minDiff) { minDiff = diff; nearestIdx = idx }
+          })
+          const x = toX(nearestIdx)
           const isBuy = trade.type === 'buy'
           const col   = isBuy ? '#10b981' : '#ef4444'
           const label = isBuy ? 'B' : 'S'
@@ -781,12 +786,28 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                 </div>
               </div>
             )}
-            <MiniChart
-              symbol={COIN_MAP[activeCoin] || 'BTCUSDT'}
-              tf={tf}
-              chartType={chartType}
-              trades={trades.filter(t => t.coin === activeCoin)}
-            />
+            {COIN_MAP[activeCoin] ? (
+              <MiniChart
+                symbol={COIN_MAP[activeCoin]}
+                tf={tf}
+                chartType={chartType}
+                trades={trades.filter(t => t.coin === activeCoin)}
+              />
+            ) : (
+              <div className="bg-gray-50 rounded-lg flex flex-col items-center justify-center" style={{height:'220px'}}>
+                <div className="text-2xl mb-2">🔍</div>
+                <div className="text-sm font-semibold text-gray-600 mb-1">{activeCoin} — Custom Token</div>
+                <div className="text-xs text-gray-400 mb-3">Binance chart not available for contract address tokens</div>
+                <a
+                  href={`https://dexscreener.com/solana/${customCoinCas[activeCoin] || ''}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs bg-emerald-500 text-white px-4 py-2 rounded-lg hover:bg-emerald-600"
+                >
+                  View on DexScreener →
+                </a>
+              </div>
+            )}
           </div>
 
           {/* Open positions */}

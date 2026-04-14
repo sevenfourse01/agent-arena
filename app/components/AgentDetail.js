@@ -365,42 +365,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     setManualLoading(prev => ({ ...prev, [symbol]: null }))
   }
 
-  async function manualClose(tradeId, symbol) {
-    setManualLoading(prev => ({ ...prev, [tradeId]: 'closing' }))
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const cachedPrices = getRawPrices()
-      const res = await fetch('/api/trade/manual', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token || ''}`,
-        },
-        body: JSON.stringify({
-          agentId: agent.id, userId: user.id,
-          action: 'CLOSE', coin: symbol, tradeId,
-          cachedPrices,
-          portfolioValue: agent.portfolio_value,
-        }),
-      })
-      const data = await res.json()
-      if (data.success) {
-        if (data.portfolio) {
-          setAgent(prev => ({
-            ...prev,
-            cash_balance:    data.portfolio.cash,
-            invested_value:  data.portfolio.invested,
-            portfolio_value: data.portfolio.total,
-          }))
-        }
-        const { data: newTrades } = await supabase.from('trades').select('*').eq('agent_id', agent.id).order('created_at', { ascending: false }).limit(50)
-        setTrades(newTrades || [])
-        setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
-      }
-    } catch (err) { console.error('Manual close error:', err) }
-    setManualLoading(prev => ({ ...prev, [tradeId]: null }))
-  }
-
   async function manualBuy(coin) {
     const symbol = coin.toUpperCase()
     const rawPrice = prices[symbol]
@@ -1034,11 +998,11 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                         <div className={`text-xs ${pnl>=0?'text-emerald-500':'text-red-400'}`}>{pnl>=0?'+':''}{pnlPct}%</div>
                       </div>
                       <button
-                        onClick={() => manualClose(pos.id, pos.coin)}
-                        disabled={!!manualLoading[pos.id]}
+                        onClick={() => manualClose(pos)}
+                        disabled={manualLoading[pos.coin] === 'closing'}
                         className="text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-2.5 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-50"
                       >
-                        {manualLoading[pos.id] === 'closing' ? '...' : 'Close'}
+                        {manualLoading[pos.coin] === 'closing' ? '...' : 'Close'}
                       </button>
                     </div>
                   </div>

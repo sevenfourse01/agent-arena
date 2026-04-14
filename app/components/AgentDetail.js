@@ -404,9 +404,9 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   async function manualBuy(coin) {
     const symbol = coin.toUpperCase()
     const rawPrice = prices[symbol]
-    if (!rawPrice) { alert('No price available for ' + symbol); return }
+    if (!rawPrice) { console.warn('No price for', symbol); setManualLoading(prev => ({ ...prev, [symbol]: null })); return }
     const price = parseFloat(rawPrice.toString().replace(/,/g,''))
-    if (!price || price <= 0) { alert('Invalid price for ' + symbol); return }
+    if (!price || price <= 0) { console.warn('Invalid price for', symbol); setManualLoading(prev => ({ ...prev, [symbol]: null })); return }
 
     setManualLoading(prev => ({ ...prev, [symbol]: 'buying' }))
     const { data: { session } } = await supabase.auth.getSession()
@@ -441,16 +441,19 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       const now = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
       setLog(prev => [{ color:'emerald', label:'Manual BUY', time:now, msg:`Manually bought ${symbol} @ $${price.toFixed(4)}`, reason:'Manual trade executed by user' }, ...prev])
     } catch (err) {
-      alert('Buy failed: ' + err.message)
+      console.error('Buy failed:', err.message)
     }
     setManualLoading(prev => ({ ...prev, [symbol]: null }))
   }
 
   async function manualClose(pos) {
     const symbol = pos.coin
-    const rawPrice = prices[symbol]
-    if (!rawPrice && !pos.entry_price) { alert('No price available'); return }
-    const price = rawPrice ? parseFloat(rawPrice.toString().replace(/,/g,'')) : pos.entry_price
+    // For CA tokens, fall back to current DexScreener price via entry_price if no Binance price
+    const rawPrice = prices[pos.coin]
+    const price = rawPrice
+      ? parseFloat(rawPrice.toString().replace(/,/g,''))
+      : safeNum(pos.entry_price, 0)
+    if (!price || price <= 0) { console.warn('No price available for close'); setManualLoading(prev => ({ ...prev, [pos.coin]: null })); return }
 
     setManualLoading(prev => ({ ...prev, [symbol]: 'closing' }))
     const { data: { session } } = await supabase.auth.getSession()
@@ -497,7 +500,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
         msg:`Manually closed ${symbol} @ $${price.toFixed(4)} — P&L: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`,
         reason:'Manual trade executed by user' }, ...prev])
     } catch (err) {
-      alert('Close failed: ' + err.message)
+      console.error('Close failed:', err.message)
     }
     setManualLoading(prev => ({ ...prev, [symbol]: null }))
   }

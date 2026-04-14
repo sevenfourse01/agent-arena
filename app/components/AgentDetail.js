@@ -362,8 +362,21 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
       setTrades(newTrades || [])
       setOpenPositions((newTrades || []).filter(t => t.status === 'open'))
 
-      const { data: ua2 } = await supabase.from('agents').select('*').eq('id', agent.id).single()
-      if (ua2) setAgent(ua2)
+      // Update portfolio directly from API response — bypasses RLS issues
+      if (data.portfolio) {
+        setAgent(prev => ({
+          ...prev,
+          cash_balance:       safeNum(data.portfolio.cash),
+          invested_value:     safeNum(data.portfolio.invested),
+          polymarket_balance: safeNum(data.portfolio.polymarket),
+          portfolio_value:    safeNum(data.portfolio.total),
+          total_return:       parseFloat((((safeNum(data.portfolio.total) - 10000) / 10000) * 100).toFixed(2)),
+          win_rate:           safeNum(data.portfolio.winRate, prev.win_rate || 0),
+        }))
+      } else {
+        const { data: ua2 } = await supabase.from('agents').select('*').eq('id', agent.id).single()
+        if (ua2) setAgent(ua2)
+      }
 
     } catch (err) {
       const now = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})

@@ -569,9 +569,11 @@ export async function POST(request) {
 
       const netSignals = bullish - bearish
 
-      // Only buy if very strong signal, no existing position, and not already bought recently
+      // Very strict: need 4+ net signals AND significant positive momentum AND not already in position
       const recentBuy = openPositions.find(p => p.coin === symbol)
-      if (!openPos && !recentBuy && netSignals >= 4 && openPositions.length < maxPositions && cashBalance > 200) {
+      // Skip if already have this coin open OR recently traded it (check all trades last 2 hours)
+      const alreadyHaveIt = openPositions.some(p => p.coin === symbol)
+      if (!openPos && !recentBuy && !alreadyHaveIt && netSignals >= 4 && change24h > 25 && volume24h > 200000 && liquidity > 100000 && openPositions.length < maxPositions && cashBalance > 500) {
         const tradeSizeUSD = (cashBalance * 8) / 100
         const units = tradeSizeUSD / price
         cashBalance -= tradeSizeUSD; investedValue += tradeSizeUSD

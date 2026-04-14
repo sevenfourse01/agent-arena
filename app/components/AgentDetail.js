@@ -647,10 +647,9 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     try {
       return openPositions.reduce((sum, pos) => {
         const rawPrice = prices[pos.coin]
-        // If price not loaded yet, use entry price (shows $0 PnL rather than wrong value)
-        const currentPrice = rawPrice
-          ? parseFloat(rawPrice.toString().replace(/,/g,''))
-          : safeNum(pos.entry_price)
+        // Only count positions where we have a live price — skip CA tokens
+        if (!rawPrice) return sum
+        const currentPrice = parseFloat(rawPrice.toString().replace(/,/g,''))
         if (!currentPrice || !pos.entry_price || !pos.amount) return sum
         return sum + (currentPrice - safeNum(pos.entry_price)) * safeNum(pos.amount) * (pos.type==='BUY'?1:-1)
       }, 0) || 0
@@ -977,12 +976,13 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                   : safeNum(pos.entry_price)
                 const entryPx = safeNum(pos.entry_price)
                 const units   = safeNum(pos.amount)
-                const pnl = entryPx && units
+                const hasLivePrice = !!rawPx
+                const pnl = entryPx && units && hasLivePrice
                   ? (currentPrice - entryPx) * units * (pos.type==='BUY'?1:-1)
                   : 0
-                const pnlPct = entryPx && units && rawPx
+                const pnlPct = entryPx && units && hasLivePrice
                   ? safeNum((pnl / (entryPx * units)) * 100).toFixed(2)
-                  : '0.00'
+                  : '?'
                 return (
                   <div key={i} className="flex items-center justify-between py-2.5 border-b border-gray-100 last:border-0">
                     <div className="flex items-center gap-2">
@@ -994,8 +994,17 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="text-right">
-                        <div className={`text-sm font-bold ${pnl>=0?'text-emerald-600':'text-red-500'}`}>{pnl>=0?'+':''}{formatPrice(Math.abs(pnl))}</div>
-                        <div className={`text-xs ${pnl>=0?'text-emerald-500':'text-red-400'}`}>{pnl>=0?'+':''}{pnlPct}%</div>
+                        {hasLivePrice ? (
+                          <>
+                            <div className={`text-sm font-bold ${pnl>=0?'text-emerald-600':'text-red-500'}`}>{pnl>=0?'+':''}{formatPrice(Math.abs(pnl))}</div>
+                            <div className={`text-xs ${pnl>=0?'text-emerald-500':'text-red-400'}`}>{pnl>=0?'+':''}{pnlPct}%</div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-sm font-bold text-gray-400">No live price</div>
+                            <div className="text-xs text-gray-300">CA token</div>
+                          </>
+                        )}
                       </div>
                       <button
                         onClick={() => manualClose(pos)}

@@ -521,6 +521,15 @@ export async function POST(request) {
       }
     } catch {}
 
+    // ── Recalculate investedValue from actual open positions ───────────
+    // This ensures invested is always accurate, not relying on stale DB value
+    const { data: stillOpen } = await supabase
+      .from('trades').select('entry_price, amount').eq('agent_id', agentId).eq('status', 'open')
+
+    investedValue = (stillOpen || []).reduce((sum, t) => {
+      return sum + safeNum(t.entry_price) * safeNum(t.amount)
+    }, 0)
+
     // ── Update agent ────────────────────────────────────────────────────
     const { data: allClosed } = await supabase
       .from('trades').select('pnl').eq('agent_id', agentId).eq('status', 'closed')

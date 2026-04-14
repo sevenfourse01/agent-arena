@@ -109,6 +109,7 @@ export default function AgentCockpit({ user, onSelectAgent, onCreateAgent }) {
   const [loading, setLoading] = useState(true)
   const [search, setSearch]   = useState('')
 
+  // Reload agents every time cockpit is shown (catches portfolio updates)
   useEffect(() => {
     async function load() {
       if (!user) return
@@ -118,6 +119,9 @@ export default function AgentCockpit({ user, onSelectAgent, onCreateAgent }) {
       setLoading(false)
     }
     load()
+    // Poll every 30s to keep stats fresh
+    const iv = setInterval(load, 30000)
+    return () => clearInterval(iv)
   }, [user])
 
   const filtered  = agents.filter(a => a.name?.toLowerCase().includes(search.toLowerCase()))

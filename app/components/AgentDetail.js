@@ -265,15 +265,31 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const coins      = Array.isArray(agent.coins) ? agent.coins : ['BTC']
   const activeCoin = selectedCoin || coins[0] || 'BTC'
 
+  // Load fresh agent data on mount to avoid stale initialAgent snapshot
   useEffect(() => {
-    const cas = agent.custom_coin_cas || {}
-    Object.entries(cas).forEach(([sym, ca]) => registerCustomCA(sym, ca))
+    async function loadFreshAgent() {
+      const { data } = await supabase.from('agents').select('*').eq('id', initialAgent.id).single()
+      if (data) {
+        setAgent(data)
+        setAgentPrompt(data.prompt || '')
+        setForumSettings(data.forum_settings || { reddit:false, fourchan:false, cryptopanic:false })
+        setCustomCoinCas(data.custom_coin_cas || {})
+        const cas = data.custom_coin_cas || {}
+        Object.entries(cas).forEach(([sym, ca]) => registerCustomCA(sym, ca))
+      } else {
+        // fallback: use cas from initialAgent
+        const cas = initialAgent.custom_coin_cas || {}
+        Object.entries(cas).forEach(([sym, ca]) => registerCustomCA(sym, ca))
+      }
+    }
+    loadFreshAgent()
     startPriceStore()
     const unsub = subscribePrices(({ prices: p, changes: c }) => {
       setPrices(p); setChanges(c)
     })
     return () => {
       unsub(); stopPriceStore()
+      const cas = initialAgent.custom_coin_cas || {}
       Object.keys(cas).forEach(sym => unregisterCustomCA(sym))
     }
   }, [])

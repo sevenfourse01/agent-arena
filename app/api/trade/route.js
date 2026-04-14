@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import Anthropic from '@anthropic-ai/sdk';
 
-// Base client (for reads)
-const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const supabaseUrl     = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnon    = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const supabaseService = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 const COINGECKO_IDS = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
@@ -12,63 +14,63 @@ const COINGECKO_IDS = {
   MATIC: 'matic-network', LINK: 'chainlink', DOT: 'polkadot',
   SHIB: 'shiba-inu', PEPE: 'pepe', WIF: 'dogwifcoin', BONK: 'bonk',
   FLOKI: 'floki',
-};
+}
 
-// Binance symbol map — used to parse cachedPrices from client
 const BINANCE_SYMBOLS = {
   BTC: 'BTCUSDT', ETH: 'ETHUSDT', SOL: 'SOLUSDT', BNB: 'BNBUSDT',
   DOGE: 'DOGEUSDT', AVAX: 'AVAXUSDT', MATIC: 'MATICUSDT',
   PEPE: 'PEPEUSDT', WIF: 'WIFUSDT', BONK: 'BONKUSDT', FLOKI: 'FLOKIUSDT',
-};
+}
 
 const CRYPTO_KEYWORDS = [
   'bitcoin','btc','ethereum','eth','solana','sol','crypto','doge','xrp',
   'coinbase','binance','altcoin','memecoin','defi','token','blockchain',
-];
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
+]
 
 function safeNum(val, fallback = 0) {
-  const n = Number(val);
-  return (isNaN(n) || !isFinite(n)) ? fallback : n;
+  const n = Number(val)
+  return (isNaN(n) || !isFinite(n)) ? fallback : n
 }
 
 function calcEMA(prices, period) {
-  if (prices.length < period) return prices[prices.length - 1] || 0;
-  const k = 2 / (period + 1);
-  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < prices.length; i++) ema = prices[i] * k + ema * (1 - k);
-  return ema;
+  if (prices.length < period) return prices[prices.length - 1] || 0
+  const k = 2 / (period + 1)
+  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period
+  for (let i = period; i < prices.length; i++) ema = prices[i] * k + ema * (1 - k)
+  return ema
 }
 
 function calcRSI(closes, period = 14) {
-  if (closes.length < period + 1) return 50;
-  let gains = 0, losses = 0;
+  if (closes.length < period + 1) return 50
+  let gains = 0, losses = 0
   for (let i = closes.length - period; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    if (d > 0) gains += d; else losses -= d;
+    const d = closes[i] - closes[i - 1]
+    if (d > 0) gains += d; else losses -= d
   }
-  const rs = gains / (losses || 0.001);
-  return 100 - 100 / (1 + rs);
+  const rs = gains / (losses || 0.001)
+  return 100 - 100 / (1 + rs)
 }
 
 function calcMACD(closes) {
-  if (closes.length < 26) return { histogram: 0 };
-  const ema12 = calcEMA(closes, 12);
-  const ema26 = calcEMA(closes, 26);
-  const macd = ema12 - ema26;
-  return { macd, signal: macd * 0.9, histogram: macd * 0.1 };
+  if (closes.length < 26) return { macd: 0, signal: 0, histogram: 0 }
+  const ema12 = calcEMA(closes, 12)
+  const ema26 = calcEMA(closes, 26)
+  const macd  = ema12 - ema26
+  const signal = macd * 0.9
+  return { macd, signal, histogram: macd - signal }
 }
 
-// Get price from cachedPrices (passed from client Binance WebSocket)
+function calcSMA(closes, period) {
+  if (closes.length < period) return closes[closes.length - 1] || 0
+  return closes.slice(-period).reduce((a, b) => a + b, 0) / period
+}
+
 function getPriceFromCache(symbol, cachedPrices) {
-  if (!cachedPrices || typeof cachedPrices !== 'object') return 0;
-  // Try direct symbol
-  if (cachedPrices[symbol]) return safeNum(cachedPrices[symbol]);
-  // Try Binance pair format
-  const binancePair = BINANCE_SYMBOLS[symbol];
-  if (binancePair && cachedPrices[binancePair]) return safeNum(cachedPrices[binancePair]);
-  return 0;
+  if (!cachedPrices || typeof cachedPrices !== 'object') return 0
+  if (cachedPrices[symbol]) return safeNum(cachedPrices[symbol])
+  const pair = BINANCE_SYMBOLS[symbol]
+  if (pair && cachedPrices[pair]) return safeNum(cachedPrices[pair])
+  return 0
 }
 
 async function fetchOHLC(coinId) {
@@ -76,11 +78,11 @@ async function fetchOHLC(coinId) {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=1`,
       { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    return Array.isArray(data) ? data : null;
-  } catch { return null; }
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    return Array.isArray(data) ? data : null
+  } catch { return null }
 }
 
 async function fetchSpotPrice(coinId) {
@@ -88,22 +90,22 @@ async function fetchSpotPrice(coinId) {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`,
       { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6000) }
-    );
-    if (!res.ok) return 0;
-    const data = await res.json();
-    return safeNum(data?.[coinId]?.usd);
-  } catch { return 0; }
+    )
+    if (!res.ok) return 0
+    const data = await res.json()
+    return safeNum(data?.[coinId]?.usd)
+  } catch { return 0 }
 }
 
 async function fetchDexScreener(ca) {
   try {
     const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`,
       { signal: AbortSignal.timeout(6000) }
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const pair = data?.pairs?.[0];
-    if (!pair) return null;
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    const pair = data?.pairs?.[0]
+    if (!pair) return null
     return {
       price:    safeNum(pair.priceUsd),
       change1h: safeNum(pair.priceChange?.h1),
@@ -112,18 +114,38 @@ async function fetchDexScreener(ca) {
       volume24h:safeNum(pair.volume?.h24),
       liquidity:safeNum(pair.liquidity?.usd),
       symbol:   pair.baseToken?.symbol?.toUpperCase() || ca.slice(0, 6),
-    };
-  } catch { return null; }
+    }
+  } catch { return null }
 }
 
 async function fetchFearGreed() {
   try {
     const res = await fetch('https://api.alternative.me/fng/?limit=1',
       { signal: AbortSignal.timeout(4000) }
-    );
-    const data = await res.json();
-    return data?.data?.[0] || { value: 50, value_classification: 'Neutral' };
-  } catch { return { value: 50, value_classification: 'Neutral' }; }
+    )
+    const data = await res.json()
+    return data?.data?.[0] || { value: 50, value_classification: 'Neutral' }
+  } catch { return { value: 50, value_classification: 'Neutral' } }
+}
+
+async function fetchRedditSentiment(coins) {
+  try {
+    const results = []
+    for (const sub of ['CryptoMoonShots', 'SatoshiStreetBets']) {
+      const res = await fetch(
+        `https://www.reddit.com/r/${sub}/hot.json?limit=10`,
+        { headers: { 'User-Agent': 'AgentArena/1.0' }, signal: AbortSignal.timeout(4000) }
+      )
+      if (!res.ok) continue
+      const data = await res.json()
+      for (const post of data?.data?.children || []) {
+        const title = post.data?.title?.toLowerCase() || ''
+        const matched = coins.find(c => title.includes(c.toLowerCase()))
+        if (matched) results.push({ coin: matched, title: post.data?.title, score: post.data?.score || 0, sub })
+      }
+    }
+    return results
+  } catch { return [] }
 }
 
 async function fetchPolymarketMarkets() {
@@ -131,9 +153,9 @@ async function fetchPolymarketMarkets() {
     const res = await fetch(
       'https://gamma-api.polymarket.com/markets?limit=100&active=true',
       { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(6000) }
-    );
-    if (!res.ok) return [];
-    const all = await res.json();
+    )
+    if (!res.ok) return []
+    const all = await res.json()
     return (Array.isArray(all) ? all : [])
       .filter(m => CRYPTO_KEYWORDS.some(kw => (m.question || '').toLowerCase().includes(kw)))
       .slice(0, 5)
@@ -142,357 +164,402 @@ async function fetchPolymarketMarkets() {
         question: m.question,
         outcomes: m.outcomes || ['Yes', 'No'],
         outcomePrices: m.outcomePrices || ['0.5', '0.5'],
-        endDate: m.endDate,
-        volume: m.volume || 0,
-      }));
-  } catch { return []; }
+      }))
+  } catch { return [] }
 }
 
-// ── Main Route ───────────────────────────────────────────────────────────────
+async function getClaudeDecision(marketData, openPositions, cashBalance, agentPrompt, fearGreed, redditSignals) {
+  const positionsSummary = openPositions.length > 0
+    ? openPositions.map(p => {
+        const current = marketData[p.coin]
+        const changePct = current ? ((current.price - p.entry_price) / p.entry_price * 100).toFixed(2) : '?'
+        return `${p.coin}: ${safeNum(p.amount).toFixed(6)} units @ $${safeNum(p.entry_price).toFixed(4)} | Current P&L: ${changePct}%`
+      }).join('\n')
+    : 'No open positions'
+
+  const marketSummary = Object.entries(marketData)
+    .map(([symbol, d]) => {
+      const priceStr = d.price > 1 ? d.price.toFixed(2) : d.price.toFixed(8)
+      const smaStr   = d.sma6 > 1  ? d.sma6.toFixed(2)  : d.sma6.toFixed(8)
+      return `${symbol}: $${priceStr} | RSI: ${d.rsi.toFixed(1)} | MACD hist: ${d.macdHistogram.toFixed(5)} | 6-candle SMA: $${smaStr} | vs SMA: ${d.priceVsSma > 0 ? '+' : ''}${d.priceVsSma.toFixed(2)}%`
+    }).join('\n')
+
+  const redditStr = redditSignals.length > 0
+    ? redditSignals.map(r => `r/${r.sub}: "${r.title}" (upvotes: ${r.score})`).join('\n')
+    : 'No relevant Reddit activity'
+
+  const prompt = `${agentPrompt}
+
+=== LIVE MARKET DATA ===
+${marketSummary}
+
+=== FEAR & GREED INDEX ===
+${fearGreed.value}/100 — ${fearGreed.value_classification}
+
+=== CURRENT PORTFOLIO ===
+Available cash: $${cashBalance.toFixed(2)}
+Open positions (${openPositions.length}/${2} max):
+${positionsSummary}
+
+=== REDDIT SIGNALS ===
+${redditStr}
+
+=== DECISION REQUIRED ===
+Based on the data above, return a JSON array of actions to take RIGHT NOW.
+Only include coins you want to BUY or CLOSE — omit everything else.
+
+[
+  {
+    "action": "BUY" or "CLOSE",
+    "coin": "SYMBOL",
+    "amount_pct": 10,
+    "reasoning": "brief explanation referencing specific indicators",
+    "confidence": 7
+  }
+]
+
+Hard rules you MUST follow:
+- Max 2 open positions at any time
+- Never BUY if RSI > 70 (overbought)
+- Never BUY if Fear & Greed < 20 (extreme fear)
+- Never BUY if price is below 6-candle SMA (no trend support)
+- CLOSE if position is down more than 8% (stop loss)
+- CLOSE if position is up more than 20% (take profit)
+- CLOSE if RSI > 75 on an open position
+- amount_pct must be between 5 and 15
+- confidence must be between 1 and 10
+
+Return ONLY the JSON array. No text before or after.`
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const text = response.content[0]?.text || '[]'
+    const jsonMatch = text.match(/\[[\s\S]*\]/)
+    if (!jsonMatch) return []
+    const decisions = JSON.parse(jsonMatch[0])
+    return Array.isArray(decisions) ? decisions : []
+  } catch (err) {
+    console.error('Claude decision error:', err.message)
+    return []
+  }
+}
 
 export async function POST(request) {
   try {
-    // Create authenticated Supabase client using user's JWT
-    // This bypasses RLS properly without needing service role key
     const authHeader = request.headers.get('authorization') || ''
     const userToken  = authHeader.replace('Bearer ', '').trim()
 
-    // Use service role if available, otherwise use user JWT, otherwise anon
     const supabase = createClient(
       supabaseUrl,
-      supabaseServiceKey || supabaseAnon,
-      supabaseServiceKey ? {} : (userToken ? {
+      supabaseService || supabaseAnon,
+      supabaseService ? {} : (userToken ? {
         global: { headers: { Authorization: `Bearer ${userToken}` } }
       } : {})
     )
 
-    const body = await request.json();
+    const body = await request.json()
     const {
       agentId,
       userId,
       coins = [],
       riskSettings = {},
-      behaviorSettings = {},
       cachedPrices = {},
       customCoinCas = {},
       openPositions: clientOpenPositions = [],
       portfolioValue: clientPortfolioValue = 10000,
-    } = body;
+      prompt: agentPrompt = '',
+      forumSettings = {},
+    } = body
 
-    // ── Load agent balances ─────────────────────────────────────────────
     const { data: agentRow } = await supabase
       .from('agents')
-      .select('cash_balance, invested_value, polymarket_balance, portfolio_value')
+      .select('cash_balance, invested_value, polymarket_balance, portfolio_value, prompt')
       .eq('id', agentId)
-      .maybeSingle();
+      .maybeSingle()
 
-    let cashBalance   = safeNum(agentRow?.cash_balance,   clientPortfolioValue || 10000);
-    let investedValue = safeNum(agentRow?.invested_value, 0);
-    let polyBalance   = safeNum(agentRow?.polymarket_balance, 0);
+    let cashBalance   = safeNum(agentRow?.cash_balance,   clientPortfolioValue || 10000)
+    let investedValue = safeNum(agentRow?.invested_value, 0)
+    let polyBalance   = safeNum(agentRow?.polymarket_balance, 0)
+    const savedPrompt = agentRow?.prompt || agentPrompt || ''
 
-    // ── Load open trades ────────────────────────────────────────────────
     const { data: openTradesDB } = await supabase
-      .from('trades')
-      .select('*')
-      .eq('agent_id', agentId)
-      .eq('status', 'open');
+      .from('trades').select('*').eq('agent_id', agentId).eq('status', 'open')
 
-    const openPositions = openTradesDB?.length ? openTradesDB : (clientOpenPositions || []);
+    const openPositions = openTradesDB?.length ? openTradesDB : (clientOpenPositions || [])
+    const stopLossPct   = safeNum(riskSettings.stopLoss, 8)
+    const takeProfitPct = safeNum(riskSettings.takeProfit, 20)
+    const maxPositions  = safeNum(riskSettings.maxPositions, 2)
 
-    const maxPositions    = safeNum(riskSettings.maxPositions, 3);
-    const positionSizePct = safeNum(riskSettings.positionSize, 10);
-    const stopLossPct     = safeNum(riskSettings.stopLoss, 8);
-    const takeProfitPct   = safeNum(riskSettings.takeProfit, 20);
+    const fearGreed = await fetchFearGreed()
 
-    const fearGreed = await fetchFearGreed();
-    const tradeResults = [];
-
-    // ── Standard Coins ──────────────────────────────────────────────────
-    const coinList = Array.isArray(coins) ? coins : [];
+    // ── Gather market data ──────────────────────────────────────────────
+    const marketData = {}
+    const coinList   = Array.isArray(coins) ? coins : []
 
     for (const coin of coinList) {
-      const symbol = coin.toUpperCase();
-      const coinId = COINGECKO_IDS[symbol];
-      if (!coinId) continue;
+      const symbol = coin.toUpperCase()
+      const coinId = COINGECKO_IDS[symbol]
+      if (!coinId) continue
 
-      // 1. Try client cache first (Binance WebSocket — most accurate)
-      let price = getPriceFromCache(symbol, cachedPrices);
+      let price = getPriceFromCache(symbol, cachedPrices)
+      let rsi = 50, macdHistogram = 0, sma6 = 0, priceVsSma = 0
 
-      // 2. Try CoinGecko OHLC for RSI/MACD
-      let rsi = 50;
-      let macdData = { histogram: 0 };
-
-      const ohlc = await fetchOHLC(coinId);
+      const ohlc = await fetchOHLC(coinId)
       if (ohlc && ohlc.length > 0) {
-        const closes = ohlc.map(c => safeNum(c[4])).filter(p => p > 0);
+        const closes = ohlc.map(c => safeNum(c[4])).filter(p => p > 0)
         if (closes.length > 0) {
-          rsi = calcRSI(closes);
-          macdData = calcMACD(closes);
-          // Only use OHLC price if we don't have a cached price
-          if (!price || price <= 0) {
-            price = closes[closes.length - 1];
-          }
+          rsi           = calcRSI(closes)
+          macdHistogram = calcMACD(closes).histogram
+          sma6          = calcSMA(closes, 6)
+          if (!price || price <= 0) price = closes[closes.length - 1]
+          priceVsSma = sma6 > 0 ? ((price - sma6) / sma6) * 100 : 0
         }
       }
 
-      // 3. Fall back to CoinGecko spot price
-      if (!price || price <= 0) {
-        price = await fetchSpotPrice(coinId);
-      }
+      if (!price || price <= 0) price = await fetchSpotPrice(coinId)
+      if (!price || price <= 0) continue
 
-      // Skip if still no price
-      if (!price || price <= 0) {
-        console.log(`No price for ${symbol}, skipping`);
-        continue;
-      }
-
-      const openPosition = openPositions.find(t => t.coin === symbol);
-      const rand = Math.random();
-      let action = 'HOLD';
-
-      if (openPosition) {
-        const entryPrice = safeNum(openPosition.entry_price, price);
-        const changePct  = entryPrice > 0 ? ((price - entryPrice) / entryPrice) * 100 : 0;
-
-        if (changePct >= takeProfitPct) {
-          action = 'CLOSE'; // Take profit
-        } else if (changePct <= -stopLossPct) {
-          action = 'CLOSE'; // Stop loss
-        } else if (rsi > 72) {
-          action = 'CLOSE'; // Overbought
-        } else if (rand < 0.25) {
-          action = 'CLOSE'; // Random exit
-        }
-      } else {
-        // Only buy if we have room and cash
-        if (openPositions.filter(p => p.status === 'open').length < maxPositions) {
-          if (rand < 0.65) action = 'BUY';
-        }
-      }
-
-      const tradeSizeUSD = (cashBalance * positionSizePct) / 100;
-      const units        = tradeSizeUSD / price; // actual units of the coin
-
-      if (action === 'BUY' && cashBalance >= tradeSizeUSD && tradeSizeUSD >= 1 && units > 0) {
-        cashBalance   -= tradeSizeUSD;
-        investedValue += tradeSizeUSD;
-
-        await supabase.from('trades').insert({
-          agent_id:    agentId,
-          user_id:     userId,
-          coin:        symbol,
-          type:        'buy',
-          entry_price: parseFloat(price.toFixed(8)),
-          amount:      parseFloat(units.toFixed(8)),  // units of coin
-          status:      'open',
-          reasoning:   `BUY ${symbol} @ $${price.toFixed(4)} — RSI: ${rsi.toFixed(1)}, MACD: ${macdData.histogram.toFixed(4)}, F&G: ${fearGreed.value}`,
-        });
-
-        tradeResults.push({ action: 'BUY', coin: symbol, price, amount: units, reasoning: `RSI ${rsi.toFixed(1)} · F&G ${fearGreed.value}` });
-      }
-
-      if (action === 'CLOSE' && openPosition) {
-        const entryPrice = safeNum(openPosition.entry_price, price);
-        const posUnits   = safeNum(openPosition.amount, 0);
-        const pnl        = (price - entryPrice) * posUnits;
-        const returned   = (entryPrice * posUnits) + pnl; // original cost + pnl
-
-        cashBalance   += returned;
-        investedValue  = Math.max(0, investedValue - (entryPrice * posUnits));
-
-        await supabase.from('trades').update({
-          status:     'closed',
-          exit_price: parseFloat(price.toFixed(8)),
-          pnl:        parseFloat(pnl.toFixed(4)),
-          closed_at:  new Date().toISOString(),
-          reasoning:  `CLOSE ${symbol} @ $${price.toFixed(4)} — Entry $${entryPrice.toFixed(4)}, P&L: $${pnl.toFixed(2)}`,
-        }).eq('id', openPosition.id);
-
-        tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl, trade: { pnl } });
-      }
+      marketData[symbol] = { price, rsi, macdHistogram, sma6, priceVsSma }
     }
 
-    // ── Custom CA Meme Coins ────────────────────────────────────────────
-    const caEntries = typeof customCoinCas === 'object' && !Array.isArray(customCoinCas)
-      ? Object.entries(customCoinCas)
-      : [];
+    // ── Reddit sentiment ────────────────────────────────────────────────
+    let redditSignals = []
+    if (forumSettings?.reddit && coinList.length > 0) {
+      redditSignals = await fetchRedditSentiment(coinList)
+    }
 
-    for (const [sym, ca] of caEntries) {
-      if (!ca) continue;
-      const dex = await fetchDexScreener(ca);
-      if (!dex || !dex.price || dex.price <= 0) continue;
+    // ── Claude makes the decisions ──────────────────────────────────────
+    const decisions = await getClaudeDecision(
+      marketData, openPositions, cashBalance, savedPrompt, fearGreed, redditSignals
+    )
 
-      const { symbol, price, change1h, change6h, change24h, volume24h, liquidity } = dex;
-      const openPosition = openPositions.find(t => t.coin === symbol);
+    const tradeResults = []
 
-      let bullishSignals = 0;
-      if (change1h  >  3) bullishSignals++;
-      if (change6h  >  8) bullishSignals++;
-      if (change24h > 15) bullishSignals++;
-      if (volume24h > 50000) bullishSignals++;
-      if (liquidity > 20000) bullishSignals++;
+    for (const decision of decisions) {
+      const { action, coin, amount_pct, reasoning, confidence } = decision
+      const symbol = coin?.toUpperCase()
+      if (!symbol || !marketData[symbol]) continue
 
-      const rand = Math.random();
-      let action = 'HOLD';
+      const price   = marketData[symbol].price
+      const openPos = openPositions.find(p => p.coin === symbol)
 
-      if (openPosition) {
-        const entryPrice = safeNum(openPosition.entry_price, price);
-        const changePct  = entryPrice > 0 ? ((price - entryPrice) / entryPrice) * 100 : 0;
-        if (changePct >= takeProfitPct || changePct <= -stopLossPct) action = 'CLOSE';
-        else if (rand < 0.2) action = 'CLOSE';
-      } else {
-        if (bullishSignals >= 3 && openPositions.length < maxPositions && rand < 0.5) action = 'BUY';
-      }
+      if (action === 'BUY' && !openPos) {
+        if (openPositions.filter(p => !tradeResults.find(t => t.action === 'CLOSE' && t.coin === p.coin)).length >= maxPositions) continue
+        if (safeNum(fearGreed.value) < 20) continue
+        if (marketData[symbol].rsi > 70) continue
 
-      const tradeSizeUSD = (cashBalance * positionSizePct) / 100;
-      const units        = tradeSizeUSD / price;
+        const pct          = Math.min(Math.max(safeNum(amount_pct, 10), 5), 15)
+        const tradeSizeUSD = (cashBalance * pct) / 100
+        const units        = tradeSizeUSD / price
 
-      if (action === 'BUY' && cashBalance >= tradeSizeUSD && units > 0) {
-        cashBalance   -= tradeSizeUSD;
-        investedValue += tradeSizeUSD;
+        if (cashBalance < tradeSizeUSD || tradeSizeUSD < 5 || units <= 0) continue
+
+        cashBalance   -= tradeSizeUSD
+        investedValue += tradeSizeUSD
 
         await supabase.from('trades').insert({
-          agent_id:    agentId,
-          user_id:     userId,
-          coin:        symbol,
-          type:        'buy',
+          agent_id: agentId, user_id: userId, coin: symbol, type: 'buy',
           entry_price: parseFloat(price.toFixed(8)),
           amount:      parseFloat(units.toFixed(8)),
           status:      'open',
-          reasoning:   `MEME BUY ${symbol} @ $${price.toFixed(8)} — ${bullishSignals}/5 signals. 1h:${change1h}% 24h:${change24h}%`,
-        });
+          reasoning:   reasoning || `BUY ${symbol} @ $${price.toFixed(4)}`,
+        })
 
-        tradeResults.push({ action: 'BUY', coin: symbol, price, amount: units, meme: true });
+        tradeResults.push({ action: 'BUY', coin: symbol, price, amount: units, confidence, reasoning })
+        openPositions.push({ coin: symbol, entry_price: price, amount: units, status: 'open' })
       }
 
-      if (action === 'CLOSE' && openPosition) {
-        const entryPrice = safeNum(openPosition.entry_price, price);
-        const posUnits   = safeNum(openPosition.amount, 0);
-        const pnl        = (price - entryPrice) * posUnits;
-        cashBalance   += (entryPrice * posUnits) + pnl;
-        investedValue  = Math.max(0, investedValue - (entryPrice * posUnits));
+      if (action === 'CLOSE' && openPos) {
+        const entryPrice = safeNum(openPos.entry_price, price)
+        const posUnits   = safeNum(openPos.amount, 0)
+        const pnl        = (price - entryPrice) * posUnits
+        const returned   = (entryPrice * posUnits) + pnl
+
+        cashBalance   += returned
+        investedValue  = Math.max(0, investedValue - (entryPrice * posUnits))
 
         await supabase.from('trades').update({
-          status:     'closed',
-          exit_price: parseFloat(price.toFixed(8)),
-          pnl:        parseFloat(pnl.toFixed(4)),
-          closed_at:  new Date().toISOString(),
-        }).eq('id', openPosition.id);
+          status: 'closed', exit_price: parseFloat(price.toFixed(8)),
+          pnl: parseFloat(pnl.toFixed(4)), closed_at: new Date().toISOString(),
+          reasoning: reasoning || `CLOSE ${symbol} @ $${price.toFixed(4)}, P&L: $${pnl.toFixed(2)}`,
+        }).eq('id', openPos.id)
 
-        tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl });
+        tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl, confidence, reasoning, trade: { pnl } })
       }
     }
 
-    // ── Polymarket Betting ──────────────────────────────────────────────
-    let polyResult = null;
+    // ── Hard stop-loss / take-profit override ───────────────────────────
+    for (const pos of openPositions) {
+      if (!pos.id || !marketData[pos.coin]) continue
+      if (tradeResults.find(t => t.coin === pos.coin)) continue
+
+      const price      = marketData[pos.coin].price
+      const entryPrice = safeNum(pos.entry_price, price)
+      const changePct  = entryPrice > 0 ? ((price - entryPrice) / entryPrice) * 100 : 0
+
+      if (changePct <= -stopLossPct || changePct >= takeProfitPct) {
+        const posUnits = safeNum(pos.amount, 0)
+        const pnl      = (price - entryPrice) * posUnits
+        cashBalance   += (entryPrice * posUnits) + pnl
+        investedValue  = Math.max(0, investedValue - (entryPrice * posUnits))
+
+        await supabase.from('trades').update({
+          status: 'closed', exit_price: parseFloat(price.toFixed(8)),
+          pnl: parseFloat(pnl.toFixed(4)), closed_at: new Date().toISOString(),
+          reasoning: changePct <= -stopLossPct
+            ? `STOP LOSS @ $${price.toFixed(4)} (${changePct.toFixed(1)}%)`
+            : `TAKE PROFIT @ $${price.toFixed(4)} (+${changePct.toFixed(1)}%)`,
+        }).eq('id', pos.id)
+
+        tradeResults.push({ action: 'CLOSE', coin: pos.coin, price, pnl,
+          reasoning: changePct <= -stopLossPct ? 'Stop loss' : 'Take profit', trade: { pnl } })
+      }
+    }
+
+    // ── Custom CA meme coins ────────────────────────────────────────────
+    const caEntries = typeof customCoinCas === 'object' && !Array.isArray(customCoinCas)
+      ? Object.entries(customCoinCas) : []
+
+    for (const [, ca] of caEntries) {
+      if (!ca) continue
+      const dex = await fetchDexScreener(ca)
+      if (!dex || !dex.price || dex.price <= 0) continue
+
+      const { symbol, price, change1h, change6h, change24h, volume24h, liquidity } = dex
+      const openPos = openPositions.find(t => t.coin === symbol)
+
+      let bullish = 0
+      if (change1h  >  3) bullish++
+      if (change6h  >  8) bullish++
+      if (change24h > 15) bullish++
+      if (volume24h > 50000) bullish++
+      if (liquidity > 20000) bullish++
+
+      if (!openPos && bullish >= 3 && openPositions.length < maxPositions && cashBalance > 100) {
+        const tradeSizeUSD = (cashBalance * 8) / 100
+        const units = tradeSizeUSD / price
+        cashBalance -= tradeSizeUSD; investedValue += tradeSizeUSD
+
+        await supabase.from('trades').insert({
+          agent_id: agentId, user_id: userId, coin: symbol, type: 'buy',
+          entry_price: parseFloat(price.toFixed(8)), amount: parseFloat(units.toFixed(8)),
+          status: 'open',
+          reasoning: `MEME BUY — ${bullish}/5 signals. 1h:${change1h}% 24h:${change24h}%`,
+        })
+        tradeResults.push({ action: 'BUY', coin: symbol, price, amount: units, meme: true })
+      }
+
+      if (openPos) {
+        const entryPrice = safeNum(openPos.entry_price, price)
+        const changePct  = entryPrice > 0 ? ((price - entryPrice) / entryPrice) * 100 : 0
+        if (changePct >= takeProfitPct || changePct <= -stopLossPct) {
+          const posUnits = safeNum(openPos.amount, 0)
+          const pnl = (price - entryPrice) * posUnits
+          cashBalance += (entryPrice * posUnits) + pnl
+          investedValue = Math.max(0, investedValue - (entryPrice * posUnits))
+          await supabase.from('trades').update({
+            status: 'closed', exit_price: parseFloat(price.toFixed(8)),
+            pnl: parseFloat(pnl.toFixed(4)), closed_at: new Date().toISOString(),
+          }).eq('id', openPos.id)
+          tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl })
+        }
+      }
+    }
+
+    // ── Polymarket ──────────────────────────────────────────────────────
+    let polyResult = null
     try {
-      const markets = await fetchPolymarketMarkets();
+      const markets = await fetchPolymarketMarkets()
       if (markets.length > 0) {
         const { data: openBets } = await supabase
-          .from('polymarket_bets')
-          .select('id, stake, created_at, odds, potential_payout, outcome')
-          .eq('agent_id', agentId)
-          .eq('status', 'open');
+          .from('polymarket_bets').select('id, stake, created_at, odds, potential_payout')
+          .eq('agent_id', agentId).eq('status', 'open')
 
-        // Auto-resolve old bets (> 7 days)
         for (const bet of openBets || []) {
-          const ageDays = (Date.now() - new Date(bet.created_at).getTime()) / 86400000;
-          if (ageDays > 7) {
-            const won = Math.random() < safeNum(bet.odds, 0.5);
-            const pnl = won ? bet.potential_payout - bet.stake : -bet.stake;
+          if ((Date.now() - new Date(bet.created_at).getTime()) / 86400000 > 7) {
+            const won = Math.random() < safeNum(bet.odds, 0.5)
+            const pnl = won ? bet.potential_payout - bet.stake : -bet.stake
             await supabase.from('polymarket_bets').update({
               status: 'resolved', result: won ? 'win' : 'loss',
               pnl: parseFloat(pnl.toFixed(2)), resolved_at: new Date().toISOString(),
-            }).eq('id', bet.id);
-            polyBalance = Math.max(0, polyBalance - bet.stake);
-            if (won) cashBalance += bet.potential_payout;
+            }).eq('id', bet.id)
+            polyBalance = Math.max(0, polyBalance - bet.stake)
+            if (won) cashBalance += bet.potential_payout
           }
         }
 
-        const activeBets = (openBets || []).filter(b => {
-          return (Date.now() - new Date(b.created_at).getTime()) / 86400000 <= 7;
-        });
+        const activeBets = (openBets || []).filter(b =>
+          (Date.now() - new Date(b.created_at).getTime()) / 86400000 <= 7
+        )
 
-        if (activeBets.length < 3 && Math.random() < 0.12 && cashBalance > 200) {
-          const market   = markets[Math.floor(Math.random() * markets.length)];
-          const outcomes = market.outcomes || ['Yes', 'No'];
-          const prices_  = market.outcomePrices || ['0.5', '0.5'];
-          const idx      = Math.random() < 0.5 ? 0 : 1;
-          const outcome  = outcomes[idx];
-          const odds     = safeNum(prices_[idx], 0.5);
-          const maxStake = Math.min(cashBalance * 0.04, 300);
-          const stake    = parseFloat(Math.max(50, maxStake).toFixed(2));
-          const payout   = parseFloat((stake / Math.max(odds, 0.01)).toFixed(2));
+        if (activeBets.length < 2 && tradeResults.length > 0 && Math.random() < 0.15 && cashBalance > 200) {
+          const market  = markets[Math.floor(Math.random() * markets.length)]
+          const idx     = Math.random() < 0.5 ? 0 : 1
+          const outcome = (market.outcomes || ['Yes','No'])[idx]
+          const odds    = safeNum((market.outcomePrices || ['0.5','0.5'])[idx], 0.5)
+          const stake   = parseFloat(Math.min(cashBalance * 0.03, 200).toFixed(2))
+          const payout  = parseFloat((stake / Math.max(odds, 0.01)).toFixed(2))
 
-          cashBalance -= stake;
-          polyBalance += stake;
+          cashBalance -= stake; polyBalance += stake
 
           const { error: betErr } = await supabase.from('polymarket_bets').insert({
             agent_id: agentId, user_id: userId,
             market_id: market.id, question: market.question,
             outcome, odds, stake, potential_payout: payout, status: 'open',
             reasoning: `${(odds*100).toFixed(0)}% implied prob. Payout: $${payout.toFixed(0)}`,
-          });
+          })
 
           if (!betErr) {
-            polyResult = { action: 'BET', market: market.question, outcome, stake, odds, potential_payout: payout };
-          } else {
-            cashBalance += stake;
-            polyBalance -= stake;
-          }
+            polyResult = { action: 'BET', market: market.question, outcome, stake, odds, potential_payout: payout }
+          } else { cashBalance += stake; polyBalance -= stake }
         }
       }
-    } catch (polyErr) {
-      console.error('Polymarket error:', polyErr.message);
-    }
+    } catch {}
 
-    // ── Update agent stats ──────────────────────────────────────────────
+    // ── Update agent ────────────────────────────────────────────────────
     const { data: allClosed } = await supabase
-      .from('trades').select('pnl').eq('agent_id', agentId).eq('status', 'closed');
+      .from('trades').select('pnl').eq('agent_id', agentId).eq('status', 'closed')
 
-    const closedCount = allClosed?.length || 0;
-    const wins        = allClosed?.filter(t => safeNum(t.pnl) > 0).length || 0;
-    const winRate     = closedCount > 0 ? parseFloat(((wins / closedCount) * 100).toFixed(1)) : 0;
-
-    const portfolioValue = cashBalance + investedValue + polyBalance;
-    const totalReturn    = parseFloat((((portfolioValue - 10000) / 10000) * 100).toFixed(2));
+    const wins     = allClosed?.filter(t => safeNum(t.pnl) > 0).length || 0
+    const winRate  = allClosed?.length > 0 ? parseFloat(((wins / allClosed.length) * 100).toFixed(1)) : 0
+    const total    = cashBalance + investedValue + polyBalance
+    const ret      = parseFloat((((total - 10000) / 10000) * 100).toFixed(2))
 
     await supabase.from('agents').update({
       cash_balance:       parseFloat(Math.max(0, cashBalance).toFixed(4)),
       invested_value:     parseFloat(Math.max(0, investedValue).toFixed(4)),
       polymarket_balance: parseFloat(Math.max(0, polyBalance).toFixed(4)),
-      portfolio_value:    parseFloat(portfolioValue.toFixed(4)),
+      portfolio_value:    parseFloat(total.toFixed(4)),
       win_rate:           winRate,
-      total_return:       totalReturn,
+      total_return:       ret,
       status:             'active',
-    }).eq('id', agentId);
+    }).eq('id', agentId)
 
-    // Return in format AgentDetail expects
-    const firstTrade = tradeResults[0];
+    const firstTrade = tradeResults[0]
     return NextResponse.json({
-      action:    firstTrade?.action || 'HOLD',
-      coin:      firstTrade?.coin   || null,
-      price:     firstTrade?.price  || null,
-      amount:    firstTrade?.amount || null,
-      confidence: 7,
-      reasoning: tradeResults.length
+      action:     firstTrade?.action || 'HOLD',
+      coin:       firstTrade?.coin   || null,
+      price:      firstTrade?.price  || null,
+      amount:     firstTrade?.amount || null,
+      confidence: firstTrade?.confidence || 7,
+      reasoning:  tradeResults.length
         ? tradeResults.map(t => `${t.action} ${t.coin}`).join(', ')
-        : 'No trades this scan — holding.',
-      trade:     firstTrade?.pnl != null ? { pnl: firstTrade.pnl } : null,
-      success:   true,
-      trades:    tradeResults,
+        : 'Claude analysed all indicators — no strong entry signals.',
+      trade:      firstTrade?.pnl != null ? { pnl: firstTrade.pnl } : null,
+      success:    true,
+      trades:     tradeResults,
       polymarket: polyResult,
       fearGreed,
-      portfolio: {
-        cash:       cashBalance,
-        invested:   investedValue,
-        polymarket: polyBalance,
-        total:      portfolioValue,
-      },
-    });
+      portfolio:  { cash: cashBalance, invested: investedValue, polymarket: polyBalance, total, winRate },
+    })
 
   } catch (err) {
-    console.error('Trade route error:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    console.error('Trade route error:', err)
+    return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }

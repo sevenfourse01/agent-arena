@@ -306,36 +306,6 @@ Rules:
     return { outcome: null, odds: 0.5, confidence: 0 }
   }
 }
-If confidence < 6, set bet to false. Only bet if you have a genuine edge.`
-
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 256,
-      messages: [{ role: 'user', content: prompt }],
-    })
-
-    const text = response.content[0]?.text || '{}'
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return { outcome: null, odds: 0.5, confidence: 0 }
-
-    const decision = JSON.parse(jsonMatch[0])
-    if (!decision.bet || decision.confidence < 6) return { outcome: null, odds: 0.5, confidence: 0 }
-
-    const idx  = outcomes.indexOf(decision.outcome)
-    const odds = idx >= 0 ? safeNum(prices[idx], 0.5) : 0.5
-
-    return {
-      outcome:    decision.outcome,
-      odds,
-      confidence: decision.confidence,
-      reasoning:  decision.reasoning,
-    }
-  } catch (err) {
-    console.error('Polymarket research error:', err.message)
-    return { outcome: null, odds: 0.5, confidence: 0 }
-  }
-}
-
 export async function POST(request) {
   try {
     const authHeader = request.headers.get('authorization') || ''

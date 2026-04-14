@@ -624,7 +624,7 @@ export async function POST(request) {
 
           // Research the market question using Claude before betting
           const betResearch = await researchPolymarketBet(market, fearGreed)
-          if (!betResearch.outcome) { break }
+          if (betResearch.outcome) {
           const { outcome, odds } = betResearch
 
           const stake   = parseFloat(Math.min(cashBalance * 0.03, 150).toFixed(2))
@@ -642,6 +642,7 @@ export async function POST(request) {
           if (!betErr) {
             polyResult = { action: 'BET', market: market.question, outcome, stake, odds, potential_payout: payout }
           } else { cashBalance += stake; polyBalance -= stake }
+          } // end if betResearch.outcome
         }
       }
     } catch {}

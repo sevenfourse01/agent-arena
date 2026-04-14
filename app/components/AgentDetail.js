@@ -327,9 +327,13 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
     setLog(prev => [{ color:'blue', label:'Scanning', time:t, msg:'Analysing market conditions...', reason:'Reading from central price hub, calculating RSI + MACD.' }, ...prev])
     try {
       const cachedPrices = getRawPrices()
+      const { data: { session } } = await supabase.auth.getSession()
       const res  = await fetch('/api/trade', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token || ''}`,
+        },
         body:    JSON.stringify({
           agentId: agent.id, userId: user.id, coins,
           prompt: agentPrompt, riskSettings: agent.risk_settings,

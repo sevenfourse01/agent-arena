@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// Use service role key for writes (bypasses RLS) — falls back to anon key
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+// Base client (for reads)
+const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 const COINGECKO_IDS = {
   BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
@@ -153,6 +152,20 @@ async function fetchPolymarketMarkets() {
 
 export async function POST(request) {
   try {
+    // Create authenticated Supabase client using user's JWT
+    // This bypasses RLS properly without needing service role key
+    const authHeader = request.headers.get('authorization') || ''
+    const userToken  = authHeader.replace('Bearer ', '').trim()
+
+    // Use service role if available, otherwise use user JWT, otherwise anon
+    const supabase = createClient(
+      supabaseUrl,
+      supabaseServiceKey || supabaseAnon,
+      supabaseServiceKey ? {} : (userToken ? {
+        global: { headers: { Authorization: `Bearer ${userToken}` } }
+      } : {})
+    )
+
     const body = await request.json();
     const {
       agentId,

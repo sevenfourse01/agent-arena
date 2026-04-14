@@ -265,7 +265,6 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   const [polyMarkets, setPolyMarkets]   = useState([])
   const [showBets, setShowBets]         = useState(false)
   const [manualLoading, setManualLoading] = useState({})
-  const [manualLoading, setManualLoading] = useState({})
 
   const tradingRef   = useRef(false)
   const intervalRef  = useRef(null)

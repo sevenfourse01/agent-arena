@@ -282,15 +282,38 @@ export async function POST(request) {
       .eq('id', agentId)
       .maybeSingle()
 
-    let cashBalance   = safeNum(agentRow?.cash_balance,   clientPortfolioValue || 10000)
-    let investedValue = safeNum(agentRow?.invested_value, 0)
     let polyBalance   = safeNum(agentRow?.polymarket_balance, 0)
     const savedPrompt = agentRow?.prompt || agentPrompt || ''
 
+    // Load all open trades first
     const { data: openTradesDB } = await supabase
       .from('trades').select('*').eq('agent_id', agentId).eq('status', 'open')
 
     const openPositions = openTradesDB?.length ? openTradesDB : (clientOpenPositions || [])
+
+    // Recalculate investedValue as sum of (entry_price * amount) for all open positions
+    // This is the ground truth — never trust the stale DB invested_value
+    let investedValue = openPositions.reduce((sum, p) => {
+      return sum + safeNum(p.entry_price) * safeNum(p.amount)
+    }, 0)
+
+    // Recalculate cashBalance as: starting $10,000 minus all money currently tied up
+    // This prevents the double-counting bug where cash inflates on close
+    const { data: allTrades } = await supabase
+      .from('trades').select('entry_price, amount, pnl, status').eq('agent_id', agentId)
+
+    const startingBalance = 10000
+    const totalInvested   = (allTrades || [])
+      .filter(t => t.status === 'open')
+      .reduce((sum, t) => sum + safeNum(t.entry_price) * safeNum(t.amount), 0)
+
+    const totalRealised = (allTrades || [])
+      .filter(t => t.status === 'closed')
+      .reduce((sum, t) => sum + safeNum(t.pnl), 0)
+
+    let cashBalance = startingBalance + totalRealised - totalInvested - polyBalance
+    cashBalance = Math.max(0, cashBalance)
+    investedValue = totalInvested
     const stopLossPct   = safeNum(riskSettings.stopLoss, 8)
     const takeProfitPct = safeNum(riskSettings.takeProfit, 20)
     const maxPositions  = safeNum(riskSettings.maxPositions, 2)

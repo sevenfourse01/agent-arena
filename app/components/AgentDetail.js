@@ -556,11 +556,11 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
   function startTrading() {
     tradingRef.current = true; setTrading(true); setNextScanIn(60)
     runTradeScan()
-    intervalRef.current  = setInterval(runTradeScan, 10000)
+    intervalRef.current  = setInterval(runTradeScan, 30000)
     countdownRef.current = setInterval(() => setNextScanIn(n => Math.max(0, n - 1)), 1000)
     const t = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})
     setLog(prev => [{ color:'green', label:'Trading started', time:t, msg:'Paper trading engine active. Using fake tokens — no real money involved.',
-      reason:`Scanning every 10 seconds. Portfolio: $${agent.portfolio_value?.toLocaleString()}.` }, ...prev])
+      reason:`Scanning every 30 seconds. Portfolio: $${agent.portfolio_value?.toLocaleString()}.` }, ...prev])
   }
 
   function stopTrading() {
@@ -1026,7 +1026,7 @@ export default function AgentDetail({ agent: initialAgent, user, onBack }) {
               <span className="text-sm font-semibold text-gray-900">Agent thought log</span>
               <div className="flex items-center gap-2">
                 {trading && <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"/>}
-                <span className="text-xs text-gray-400">{trading ? 'scanning every 10s' : 'idle'}</span>
+                <span className="text-xs text-gray-400">{trading ? 'scanning every 30s' : 'idle'}</span>
               </div>
             </div>
             <div className="flex flex-col gap-0 max-h-72 overflow-y-auto">

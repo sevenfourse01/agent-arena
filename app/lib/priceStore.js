@@ -1,156 +1,195 @@
-// Central price store — fetches once every 10s, all agents read from it
+// priceStore.js — uses Binance WebSocket for live prices (no rate limits)
+// Falls back to REST on connection failure
 
-const COINGECKO_IDS = {
-  BTC:   'bitcoin',
-  ETH:   'ethereum',
-  SOL:   'solana',
-  BNB:   'binancecoin',
-  AVAX:  'avalanche-2',
-  MATIC: 'polygon-ecosystem-token',
-  DOGE:  'dogecoin',
-  PEPE:  'pepe',
-  WIF:   'dogwifcoin',
-  BONK:  'bonk',
-  FLOKI: 'floki',
-  MEME:  'solana',
+const SYMBOLS = [
+  'BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','DOGEUSDT',
+  'AVAXUSDT','MATICUSDT','PEPEUSDT','WIFUSDT','BONKUSDT','FLOKIUSDT',
+]
+
+const SYMBOL_TO_COIN = {
+  BTCUSDT:'BTC', ETHUSDT:'ETH', SOLUSDT:'SOL', BNBUSDT:'BNB',
+  DOGEUSDT:'DOGE', AVAXUSDT:'AVAX', MATICUSDT:'MATIC',
+  PEPEUSDT:'PEPE', WIFUSDT:'WIF', BONKUSDT:'BONK', FLOKIUSDT:'FLOKI',
 }
 
-// $AGENT CA — swap for real CA at launch
-const AGENT_CA = 'PLACEHOLDER_AGENT_CA'
+let ws            = null
+let subscribers   = []
+let prices        = {}
+let changes       = {}
+let customCAs     = {}
+let running       = false
+let restInterval  = null
+let reconnectTimer = null
 
-// Custom CAs registered by agents: { symbol: ca }
-let customCAs = {}
-
-const ALL_IDS = [...new Set(Object.values(COINGECKO_IDS))].join(',')
-
-let store = {
-  prices:     {},
-  changes:    {},
-  raw:        {},
-  lastUpdate: null,
-  listeners:  new Set(),
+function formatPrice(n) {
+  if (!n) return '0'
+  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  if (n >= 1)    return n.toFixed(2)
+  if (n >= 0.01) return n.toFixed(4)
+  return n.toFixed(8)
 }
-
-let fetchInterval = null
 
 function notify() {
-  store.listeners.forEach(fn => fn({ ...store }))
+  const snapshot = { prices: { ...prices }, changes: { ...changes } }
+  subscribers.forEach(fn => { try { fn(snapshot) } catch {} })
 }
 
-function fmtPrice(p) {
-  if (!p) return '0'
-  if (p >= 1000) return p.toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 })
-  if (p >= 1)    return p.toFixed(2)
-  if (p >= 0.01) return p.toFixed(4)
-  return p.toFixed(8)
-}
+// ── Binance WebSocket ─────────────────────────────────────────────────────────
+function connectWebSocket() {
+  if (typeof window === 'undefined') return
+  if (ws && ws.readyState === WebSocket.OPEN) return
 
-async function fetchDexScreener(ca) {
   try {
-    const res  = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`)
-    const data = await res.json()
-    const pair = data?.pairs?.[0]
-    if (!pair) return null
-    return {
-      price:     parseFloat(pair.priceUsd || 0),
-      change24h: parseFloat(pair.priceChange?.h24 || 0),
-      high24h:   parseFloat(pair.priceUsd || 0),
-      low24h:    parseFloat(pair.priceUsd || 0),
-      volume:    parseFloat(pair.volume?.h24 || 0),
+    const streams = SYMBOLS.map(s => `${s.toLowerCase()}@ticker`).join('/')
+    ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`)
+
+    ws.onmessage = (e) => {
+      try {
+        const msg  = JSON.parse(e.data)
+        const data = msg.data
+        if (!data?.s) return
+        const coin   = SYMBOL_TO_COIN[data.s]
+        if (!coin) return
+        const price  = parseFloat(data.c)  // last price
+        const change = parseFloat(data.P)  // 24h change %
+        if (isNaN(price)) return
+        prices[coin]  = formatPrice(price)
+        changes[coin] = isNaN(change) ? '0.00' : change.toFixed(2)
+        notify()
+      } catch {}
     }
-  } catch { return null }
-}
 
-async function fetchAll() {
-  try {
-    // Fetch CoinGecko + AGENT + all custom CAs in parallel
-    const customSymbols = Object.keys(customCAs)
-    const agentFetch    = AGENT_CA !== 'PLACEHOLDER_AGENT_CA' ? fetchDexScreener(AGENT_CA) : Promise.resolve(null)
-    const customFetches = customSymbols.map(sym => fetchDexScreener(customCAs[sym]))
+    ws.onopen = () => {
+      console.log('PriceStore: WebSocket connected')
+      // Stop REST polling since WS is working
+      if (restInterval) { clearInterval(restInterval); restInterval = null }
+    }
 
-    const [cgRes, agentData, ...customResults] = await Promise.all([
-      fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ALL_IDS}&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true&include_high_24hr=true&include_low_24hr=true`),
-      agentFetch,
-      ...customFetches,
-    ])
-
-    const data = await cgRes.json()
-    const prices = {}, changes = {}, raw = {}
-
-    // CoinGecko coins
-    for (const [coin, id] of Object.entries(COINGECKO_IDS)) {
-      if (data[id]) {
-        const p = data[id].usd || 0
-        const c = data[id].usd_24h_change || 0
-        prices[coin]  = fmtPrice(p)
-        changes[coin] = c.toFixed(2)
-        raw[coin] = {
-          price:     p,
-          change24h: c,
-          high24h:   data[id].usd_24h_high || p,
-          low24h:    data[id].usd_24h_low  || p,
-          volume:    data[id].usd_24h_vol  || 0,
-        }
+    ws.onclose = () => {
+      console.log('PriceStore: WebSocket closed, reconnecting in 5s...')
+      ws = null
+      if (running) {
+        reconnectTimer = setTimeout(() => {
+          connectWebSocket()
+        }, 5000)
+        // Start REST fallback while reconnecting
+        startRestFallback()
       }
     }
 
-    // $AGENT
-    if (agentData) {
-      prices['AGENT']  = fmtPrice(agentData.price)
-      changes['AGENT'] = agentData.change24h.toFixed(2)
-      raw['AGENT']     = agentData
-    } else {
-      prices['AGENT']  = prices['SOL'] || '...'
-      changes['AGENT'] = changes['SOL'] || '0.00'
-      raw['AGENT']     = raw['SOL'] || {}
+    ws.onerror = () => {
+      ws?.close()
     }
-
-    // Custom CA coins
-    customSymbols.forEach((sym, i) => {
-      const d = customResults[i]
-      if (d) {
-        prices[sym]  = fmtPrice(d.price)
-        changes[sym] = d.change24h.toFixed(2)
-        raw[sym]     = d
-      }
-    })
-
-    store.prices     = prices
-    store.changes    = changes
-    store.raw        = raw
-    store.lastUpdate = Date.now()
-    notify()
-  } catch (e) {
-    console.error('priceStore fetch error:', e)
+  } catch (err) {
+    console.error('PriceStore WebSocket error:', err)
+    startRestFallback()
   }
 }
 
-// Register a custom CA so priceStore fetches it on every cycle
+// ── REST Fallback (used when WS fails) ───────────────────────────────────────
+async function fetchPricesRest() {
+  try {
+    const ids = 'bitcoin,ethereum,solana,binancecoin,dogecoin,avalanche-2,matic-network,pepe,dogwifcoin,bonk,floki'
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`,
+      { headers: { Accept: 'application/json' } }
+    )
+    if (!res.ok) return
+    const data = await res.json()
+
+    const map = {
+      bitcoin:'BTC', ethereum:'ETH', solana:'SOL', binancecoin:'BNB',
+      dogecoin:'DOGE', 'avalanche-2':'AVAX', 'matic-network':'MATIC',
+      pepe:'PEPE', dogwifcoin:'WIF', bonk:'BONK', floki:'FLOKI',
+    }
+
+    Object.entries(map).forEach(([id, coin]) => {
+      if (data[id]?.usd) {
+        prices[coin]  = formatPrice(data[id].usd)
+        changes[coin] = (data[id].usd_24h_change || 0).toFixed(2)
+      }
+    })
+    notify()
+  } catch {}
+}
+
+function startRestFallback() {
+  if (restInterval) return
+  fetchPricesRest() // immediate fetch
+  restInterval = setInterval(fetchPricesRest, 30000) // every 30s
+}
+
+// ── Custom CA tokens (DexScreener) ───────────────────────────────────────────
+async function fetchCustomCA(symbol, ca) {
+  try {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${ca}`)
+    if (!res.ok) return
+    const data = await res.json()
+    const pair = data?.pairs?.[0]
+    if (!pair) return
+    const price  = parseFloat(pair.priceUsd || 0)
+    const change = parseFloat(pair.priceChange?.h24 || 0)
+    if (!price) return
+    prices[symbol]  = formatPrice(price)
+    changes[symbol] = change.toFixed(2)
+    notify()
+  } catch {}
+}
+
+let caInterval = null
+function startCAPolling() {
+  if (caInterval) clearInterval(caInterval)
+  caInterval = setInterval(() => {
+    Object.entries(customCAs).forEach(([sym, ca]) => fetchCustomCA(sym, ca))
+  }, 30000)
+  // Immediate fetch
+  Object.entries(customCAs).forEach(([sym, ca]) => fetchCustomCA(sym, ca))
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+export function startPriceStore() {
+  if (running) return
+  running = true
+  connectWebSocket()
+  // Small delay then start REST as backup in case WS takes time
+  setTimeout(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      startRestFallback()
+    }
+  }, 3000)
+}
+
+export function stopPriceStore() {
+  running = false
+  if (ws) { ws.close(); ws = null }
+  if (restInterval) { clearInterval(restInterval); restInterval = null }
+  if (caInterval) { clearInterval(caInterval); caInterval = null }
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+}
+
+export function subscribePrices(fn) {
+  subscribers.push(fn)
+  // Send current prices immediately if available
+  if (Object.keys(prices).length > 0) {
+    fn({ prices: { ...prices }, changes: { ...changes } })
+  }
+  return () => { subscribers = subscribers.filter(s => s !== fn) }
+}
+
+export function getRawPrices() {
+  return { ...prices }
+}
+
 export function registerCustomCA(symbol, ca) {
   if (!symbol || !ca) return
   customCAs[symbol] = ca
+  fetchCustomCA(symbol, ca) // immediate
+  if (!caInterval) startCAPolling()
 }
 
 export function unregisterCustomCA(symbol) {
   delete customCAs[symbol]
-}
-
-export function startPriceStore() {
-  if (fetchInterval) return
-  fetchAll()
-  fetchInterval = setInterval(fetchAll, 10000)
-}
-
-export function stopPriceStore() {
-  if (fetchInterval) { clearInterval(fetchInterval); fetchInterval = null }
-}
-
-export function subscribePrices(fn) {
-  store.listeners.add(fn)
-  if (Object.keys(store.prices).length) fn({ ...store })
-  return () => store.listeners.delete(fn)
-}
-
-export function getRawPrices() {
-  return store.raw
+  delete prices[symbol]
+  delete changes[symbol]
 }

@@ -915,7 +915,7 @@ export async function POST(request) {
       trades:     tradeResults,
       polymarket: polyResult,
       fearGreed,
-      portfolio:  { cash: cashBalance, invested: investedValue, polymarket: polyBalance, total, winRate },
+      portfolio:  { cash: cashBalance, invested: investedValue, polymarket: polyBalance, total: finalTotal, winRate },
     })
 
   } catch (err) {

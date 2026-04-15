@@ -858,31 +858,45 @@ export async function POST(request) {
       }
     } catch {}
 
-    // ── Recalculate investedValue from actual open positions ───────────
-    // This ensures invested is always accurate, not relying on stale DB value
-    const { data: stillOpen } = await supabase
-      .from('trades').select('entry_price, amount').eq('agent_id', agentId).eq('status', 'open')
+    // ── Recalculate EVERYTHING from scratch using DB as source of truth ─
+    // Never trust the in-memory cashBalance — always derive from actual trades
+    const { data: allTradesFinal } = await supabase
+      .from('trades').select('entry_price, amount, pnl, status')
+      .eq('agent_id', agentId)
 
-    investedValue = (stillOpen || []).reduce((sum, t) => {
-      return sum + safeNum(t.entry_price) * safeNum(t.amount)
-    }, 0)
+    const finalInvested = (allTradesFinal || [])
+      .filter(t => t.status === 'open')
+      .reduce((sum, t) => sum + safeNum(t.entry_price) * safeNum(t.amount), 0)
 
-    // ── Update agent ────────────────────────────────────────────────────
-    const { data: allClosed } = await supabase
-      .from('trades').select('pnl').eq('agent_id', agentId).eq('status', 'closed')
+    const finalRealised = (allTradesFinal || [])
+      .filter(t => t.status === 'closed')
+      .reduce((sum, t) => sum + safeNum(t.pnl), 0)
 
-    const wins     = allClosed?.filter(t => safeNum(t.pnl) > 0).length || 0
-    const winRate  = allClosed?.length > 0 ? parseFloat(((wins / allClosed.length) * 100).toFixed(1)) : 0
-    const total    = cashBalance + investedValue + polyBalance
-    const ret      = parseFloat((((total - 10000) / 10000) * 100).toFixed(2))
+    const { data: polyBetsOpen } = await supabase
+      .from('polymarket_bets').select('stake')
+      .eq('agent_id', agentId).eq('status', 'open')
+
+    const finalPolyBalance = (polyBetsOpen || []).reduce((sum, b) => sum + safeNum(b.stake), 0)
+    const finalCash        = Math.max(0, 10000 + finalRealised - finalInvested - finalPolyBalance)
+    const finalTotal       = finalCash + finalInvested + finalPolyBalance
+    const finalReturn      = parseFloat((((finalTotal - 10000) / 10000) * 100).toFixed(2))
+
+    const allClosed  = (allTradesFinal || []).filter(t => t.status === 'closed')
+    const wins       = allClosed.filter(t => safeNum(t.pnl) > 0).length
+    const winRate    = allClosed.length > 0 ? parseFloat(((wins / allClosed.length) * 100).toFixed(1)) : 0
+
+    // Use recalculated values for response
+    investedValue = finalInvested
+    polyBalance   = finalPolyBalance
+    cashBalance   = finalCash
 
     await supabase.from('agents').update({
-      cash_balance:       parseFloat(Math.max(0, cashBalance).toFixed(4)),
-      invested_value:     parseFloat(Math.max(0, investedValue).toFixed(4)),
-      polymarket_balance: parseFloat(Math.max(0, polyBalance).toFixed(4)),
-      portfolio_value:    parseFloat(total.toFixed(4)),
+      cash_balance:       parseFloat(finalCash.toFixed(4)),
+      invested_value:     parseFloat(finalInvested.toFixed(4)),
+      polymarket_balance: parseFloat(finalPolyBalance.toFixed(4)),
+      portfolio_value:    parseFloat(finalTotal.toFixed(4)),
       win_rate:           winRate,
-      total_return:       ret,
+      total_return:       finalReturn,
       status:             'active',
     }).eq('id', agentId)
 

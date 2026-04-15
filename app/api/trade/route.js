@@ -324,67 +324,114 @@ async function fetchPolymarketMarkets() {
 }
 
 async function getClaudeDecision(marketData, openPositions, cashBalance, agentPrompt, fearGreed, redditSignals) {
-  const positionsSummary = openPositions.length > 0
-    ? openPositions.map(p => {
-        const current = marketData[p.coin]
-        const changePct = current ? ((current.price - p.entry_price) / p.entry_price * 100).toFixed(2) : '?'
-        return `${p.coin}: ${safeNum(p.amount).toFixed(6)} units @ $${safeNum(p.entry_price).toFixed(4)} | Current P&L: ${changePct}%`
-      }).join('\n')
-    : 'No open positions'
+  // Build a rich picture of each coin like a human trader would see
+  const coinAnalysis = Object.entries(marketData).map(([symbol, d]) => {
+    const openPos = openPositions.find(p => p.coin === symbol)
+    const pnlPct  = openPos ? ((d.price - openPos.entry_price) / openPos.entry_price * 100).toFixed(2) : null
 
-  const marketSummary = Object.entries(marketData)
-    .map(([symbol, d]) => {
-      const priceStr = d.price > 1 ? d.price.toFixed(2) : d.price.toFixed(8)
-      const smaStr   = d.sma6 > 1  ? d.sma6.toFixed(2)  : d.sma6.toFixed(8)
-      return `${symbol}: $${priceStr} | RSI: ${d.rsi.toFixed(1)} | MACD hist: ${d.macdHistogram.toFixed(5)} | 6-candle SMA: $${smaStr} | vs SMA: ${d.priceVsSma > 0 ? '+' : ''}${d.priceVsSma.toFixed(2)}%`
-    }).join('\n')
+    // Interpret indicators in plain English like a trader would
+    const rsiSignal = d.rsi > 75 ? 'OVERBOUGHT — likely to reverse' :
+                      d.rsi > 60 ? 'bullish momentum, not yet overbought' :
+                      d.rsi > 45 ? 'neutral zone, watching' :
+                      d.rsi > 30 ? 'oversold territory, potential bounce' :
+                                   'EXTREME oversold — strong bounce candidate'
+
+    const macdSignal = d.macdHistogram > 0.0001 ? 'MACD positive and rising — buy pressure' :
+                       d.macdHistogram > 0       ? 'MACD barely positive — weak momentum' :
+                       d.macdHistogram > -0.0001 ? 'MACD barely negative — losing steam' :
+                                                   'MACD negative — sell pressure'
+
+    const trendSignal = d.priceVsSma > 2  ? `price ${d.priceVsSma.toFixed(1)}% ABOVE SMA — strong uptrend` :
+                        d.priceVsSma > 0  ? `price ${d.priceVsSma.toFixed(1)}% above SMA — mild uptrend` :
+                        d.priceVsSma > -2 ? `price ${Math.abs(d.priceVsSma).toFixed(1)}% below SMA — mild downtrend` :
+                                            `price ${Math.abs(d.priceVsSma).toFixed(1)}% BELOW SMA — strong downtrend`
+
+    const priceStr = d.price > 1 ? '$' + d.price.toFixed(2) : '$' + d.price.toFixed(8)
+
+    const volSignal = (d.volumeRatio || 1) > 1.5 ? 'HIGH volume (${((d.volumeRatio||1)*100).toFixed(0)}% of avg) — strong conviction' :
+                      (d.volumeRatio || 1) > 0.8 ? 'normal volume' :
+                      'LOW volume — weak signal, be cautious'
+    const change24hStr = d.change24h !== undefined ? `${d.change24h > 0 ? '+' : ''}${safeNum(d.change24h).toFixed(1)}% (24h)` : ''
+
+    return [
+      `${symbol} @ ${priceStr} ${change24hStr}${openPos ? ' [HOLDING — P&L: ' + pnlPct + '%]' : ' [no position]'}`,
+      '  RSI ' + d.rsi.toFixed(0) + ': ' + rsiSignal,
+      '  ' + macdSignal,
+      '  Trend: ' + trendSignal,
+      '  Volume: ' + ((d.volumeRatio||1) > 1.5 ? 'HIGH (' + ((d.volumeRatio||1)*100).toFixed(0) + '% of avg) — strong conviction' : (d.volumeRatio||1) > 0.8 ? 'normal' : 'LOW — weak signal'),
+    ].join('\n')
+  }).join('\n\n')
 
   const redditStr = redditSignals.length > 0
-    ? redditSignals.map(r => `r/${r.sub}: "${r.title}" (upvotes: ${r.score})`).join('\n')
-    : 'No relevant Reddit activity'
+    ? redditSignals.map(r => `  r/${r.sub}: "${r.title}" (${r.score} upvotes)`).join('\n')
+    : '  Nothing notable'
 
-  const prompt = `${agentPrompt}
+  const fgInterpret = fearGreed.value > 75 ? 'Greed — market overstretched, be cautious buying' :
+                      fearGreed.value > 55 ? 'Neutral-Greed — decent entry environment' :
+                      fearGreed.value > 40 ? 'Neutral — wait for clearer signals' :
+                      fearGreed.value > 25 ? 'Fear — contrarian buying opportunity on strong coins' :
+                                             'Extreme Fear — market in panic, only buy the very best setups'
 
-=== LIVE MARKET DATA ===
-${marketSummary}
+  const holdingStr = openPositions.length > 0
+    ? openPositions.map(p => {
+        const d = marketData[p.coin]
+        const pnl = d ? ((d.price - p.entry_price) / p.entry_price * 100).toFixed(1) : '?'
+        return `  ${p.coin}: entry $${safeNum(p.entry_price).toFixed(p.entry_price > 1 ? 2 : 8)}, now ${pnl}% P&L`
+      }).join('\n')
+    : '  None — all cash'
 
-=== FEAR & GREED INDEX ===
-${fearGreed.value}/100 — ${fearGreed.value_classification}
+  const prompt = agentPrompt + `
 
-=== CURRENT PORTFOLIO ===
-Available cash: $${cashBalance.toFixed(2)}
-Open positions (${openPositions.length}/${2} max):
-${positionsSummary}
+You are a professional crypto trader scanning the market RIGHT NOW. Think step by step like a real trader would.
 
-=== REDDIT SIGNALS ===
+MARKET SNAPSHOT:
+${coinAnalysis}
+
+SENTIMENT:
+Fear & Greed: ${fearGreed.value}/100 — ${fgInterpret}
+
+Reddit chatter:
 ${redditStr}
 
-=== DECISION REQUIRED ===
-Based on the data above, return a JSON array of actions to take RIGHT NOW.
-Only include coins you want to BUY or CLOSE — omit everything else.
+YOUR PORTFOLIO:
+Cash available: $${cashBalance.toFixed(2)} of $10,000
+Current positions (max 3 allowed):
+${holdingStr}
 
+YOUR JOB:
+Think like a trader. Ask yourself:
+1. Which coins have the best setup RIGHT NOW? (RSI in range, MACD positive, above SMA = ideal entry)
+2. Any positions to cut? (stop loss, take profit, or momentum dying)
+3. How confident am I? (size position accordingly — 5% for weak signal, 20% for high conviction)
+
+POSITION SIZING GUIDE:
+- Low conviction (confidence 6-7): use 5-8% of cash
+- Medium conviction (confidence 7-8): use 10-15% of cash  
+- High conviction (confidence 9-10): use 15-20% of cash
+
+RESPOND with a JSON array. Only include BUY or CLOSE actions — skip everything else.
 [
   {
-    "action": "BUY" or "CLOSE",
+    "action": "BUY",
     "coin": "SYMBOL",
-    "amount_pct": 10,
-    "reasoning": "brief explanation referencing specific indicators",
-    "confidence": 7
+    "amount_pct": 12,
+    "reasoning": "RSI at 52 (momentum zone), MACD turning positive, price 1.2% above SMA — clean entry setup",
+    "confidence": 8
   }
 ]
 
-Hard rules you MUST follow:
-- Max 2 open positions at any time
-- Never BUY if RSI > 70 (overbought)
-- Never BUY if Fear & Greed < 20 (extreme fear)
-- Never BUY if price is below 6-candle SMA (no trend support)
-- CLOSE if position is down more than 8% (stop loss)
-- CLOSE if position is up more than 20% (take profit)
-- CLOSE if RSI > 75 on an open position
-- amount_pct must be between 5 and 15
-- confidence must be between 1 and 10
+TRADER RULES:
+- RSI 40-65 is the sweet spot for BUY entries
+- RSI > 75 = overbought, do NOT buy, consider closing longs
+- MACD histogram positive AND growing = strong buy signal
+- Price above SMA = trend support — always want this on entry
+- Extreme Fear (F&G < 25) = only buy BTC or ETH if setup is perfect
+- Fear (F&G 25-45) = good contrarian entry for quality coins
+- Never hold more than 3 positions
+- Cut losses at -8%, take profits at +20%, or if momentum dies
+- If no coin has a clean setup — return empty array []
 
-Return ONLY the JSON array. No text before or after.`
+Return ONLY the JSON array. No explanation outside the JSON.`
 
   try {
     const response = await anthropic.messages.create({
@@ -404,7 +451,7 @@ Return ONLY the JSON array. No text before or after.`
   }
 }
 
-// Research a Polymarket question using Claude + web search before betting
+
 async function researchPolymarketBet(market, fearGreed) {
   try {
     const question = market.question || ''
@@ -570,7 +617,7 @@ export async function POST(request) {
     investedValue = totalInvested
     const stopLossPct   = safeNum(riskSettings.stopLoss, 8)
     const takeProfitPct = safeNum(riskSettings.takeProfit, 20)
-    const maxPositions  = safeNum(riskSettings.maxPositions, 2)
+    const maxPositions  = safeNum(riskSettings.maxPositions, 3)
 
     const fearGreed = await fetchFearGreed()
 
@@ -584,24 +631,32 @@ export async function POST(request) {
       if (!coinId) continue
 
       let price = getPriceFromCache(symbol, cachedPrices)
-      let rsi = 50, macdHistogram = 0, sma6 = 0, priceVsSma = 0
+      let rsi = 50, macdHistogram = 0, sma6 = 0, sma20 = 0, priceVsSma = 0, volumeRatio = 1, change24h = 0
 
       const ohlc = await fetchOHLC(coinId)
       if (ohlc && ohlc.length > 0) {
-        const closes = ohlc.map(c => safeNum(c[4])).filter(p => p > 0)
+        const closes  = ohlc.map(c => safeNum(c[4])).filter(p => p > 0)
+        const volumes = ohlc.map(c => safeNum(c[5])).filter(v => v > 0)
         if (closes.length > 0) {
           rsi           = calcRSI(closes)
           macdHistogram = calcMACD(closes).histogram
           sma6          = calcSMA(closes, 6)
+          sma20         = calcSMA(closes, Math.min(20, closes.length))
           if (!price || price <= 0) price = closes[closes.length - 1]
           priceVsSma = sma6 > 0 ? ((price - sma6) / sma6) * 100 : 0
+          // Volume trend: is current volume above average?
+          const avgVol = volumes.length > 1 ? volumes.slice(0, -1).reduce((a,b) => a+b, 0) / (volumes.length - 1) : 0
+          const curVol = volumes[volumes.length - 1] || 0
+          volumeRatio  = avgVol > 0 ? curVol / avgVol : 1
+          // 24h price change
+          change24h = closes.length > 1 ? ((closes[closes.length-1] - closes[0]) / closes[0]) * 100 : 0
         }
       }
 
       if (!price || price <= 0) price = await fetchSpotPrice(coinId)
       if (!price || price <= 0) continue
 
-      marketData[symbol] = { price, rsi, macdHistogram, sma6, priceVsSma }
+      marketData[symbol] = { price, rsi, macdHistogram, sma6, priceVsSma, volumeRatio: volumeRatio || 1, change24h: change24h || 0 }
     }
 
     // ── Reddit sentiment ────────────────────────────────────────────────
@@ -626,15 +681,16 @@ export async function POST(request) {
       const openPos = openPositions.find(p => p.coin === symbol)
 
       if (action === 'BUY' && !openPos) {
-        if (openPositions.filter(p => !tradeResults.find(t => t.action === 'CLOSE' && t.coin === p.coin)).length >= maxPositions) continue
-        if (safeNum(fearGreed.value) < 20) continue
-        if (marketData[symbol].rsi > 70) continue
+        // Count current open positions minus any we just closed this scan
+        const currentOpen = openPositions.filter(p => !tradeResults.find(t => t.action === 'CLOSE' && t.coin === p.coin)).length
+        if (currentOpen >= maxPositions) continue
 
-        const pct          = Math.min(Math.max(safeNum(amount_pct, 10), 5), 15)
+        // Dynamic position sizing — Claude sets amount_pct based on conviction
+        const pct          = Math.min(Math.max(safeNum(amount_pct, 10), 5), 25)
         const tradeSizeUSD = (cashBalance * pct) / 100
         const units        = tradeSizeUSD / price
 
-        if (cashBalance < tradeSizeUSD || tradeSizeUSD < 5 || units <= 0) continue
+        if (cashBalance < tradeSizeUSD || tradeSizeUSD < 10 || units <= 0) continue
 
         cashBalance   -= tradeSizeUSD
         investedValue += tradeSizeUSD
@@ -644,7 +700,7 @@ export async function POST(request) {
           entry_price: parseFloat(price.toFixed(8)),
           amount:      parseFloat(units.toFixed(8)),
           status:      'open',
-          reasoning:   reasoning || `BUY ${symbol} @ $${price.toFixed(4)}`,
+          reasoning:   reasoning || `BUY ${symbol} @ $${price.toFixed(price > 1 ? 2 : 8)} — confidence ${confidence}/10`,
         })
 
         tradeResults.push({ action: 'BUY', coin: symbol, price, amount: units, confidence, reasoning })
@@ -679,22 +735,28 @@ export async function POST(request) {
       const entryPrice = safeNum(pos.entry_price, price)
       const changePct  = entryPrice > 0 ? ((price - entryPrice) / entryPrice) * 100 : 0
 
-      if (changePct <= -stopLossPct || changePct >= takeProfitPct) {
+      // Stop loss at -8%, take profit at +20% (or agent's configured settings)
+      // Also close if RSI is very overbought (>78) — protect profits
+      const rsiOverbought = marketData[pos.coin]?.rsi > 78
+      if (changePct <= -stopLossPct || changePct >= takeProfitPct || rsiOverbought) {
         const posUnits = safeNum(pos.amount, 0)
         const pnl      = (price - entryPrice) * posUnits
         cashBalance   += (entryPrice * posUnits) + pnl
         investedValue  = Math.max(0, investedValue - (entryPrice * posUnits))
 
+        const closeReason = changePct <= -stopLossPct
+          ? `STOP LOSS @ $${price.toFixed(price > 1 ? 2 : 8)} (${changePct.toFixed(1)}%) — cutting loss`
+          : rsiOverbought
+            ? `RSI OVERBOUGHT (${marketData[pos.coin]?.rsi.toFixed(0)}) @ $${price.toFixed(price > 1 ? 2 : 8)} — locking in ${changePct.toFixed(1)}% gain`
+            : `TAKE PROFIT @ $${price.toFixed(price > 1 ? 2 : 8)} (+${changePct.toFixed(1)}%) — target hit`
+
         await supabase.from('trades').update({
           status: 'closed', exit_price: parseFloat(price.toFixed(8)),
           pnl: parseFloat(pnl.toFixed(4)), closed_at: new Date().toISOString(),
-          reasoning: changePct <= -stopLossPct
-            ? `STOP LOSS @ $${price.toFixed(4)} (${changePct.toFixed(1)}%)`
-            : `TAKE PROFIT @ $${price.toFixed(4)} (+${changePct.toFixed(1)}%)`,
+          reasoning: closeReason,
         }).eq('id', pos.id)
 
-        tradeResults.push({ action: 'CLOSE', coin: pos.coin, price, pnl,
-          reasoning: changePct <= -stopLossPct ? 'Stop loss' : 'Take profit', trade: { pnl } })
+        tradeResults.push({ action: 'CLOSE', coin: pos.coin, price, pnl, reasoning: closeReason, trade: { pnl } })
       }
     }
 

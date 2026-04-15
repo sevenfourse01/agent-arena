@@ -107,15 +107,170 @@ async function fetchDexScreener(ca) {
     const pair = data?.pairs?.[0]
     if (!pair) return null
     return {
-      price:    safeNum(pair.priceUsd),
-      change1h: safeNum(pair.priceChange?.h1),
-      change6h: safeNum(pair.priceChange?.h6),
-      change24h:safeNum(pair.priceChange?.h24),
-      volume24h:safeNum(pair.volume?.h24),
-      liquidity:safeNum(pair.liquidity?.usd),
-      symbol:   pair.baseToken?.symbol?.toUpperCase() || ca.slice(0, 6),
+      price:     safeNum(pair.priceUsd),
+      change1h:  safeNum(pair.priceChange?.h1),
+      change6h:  safeNum(pair.priceChange?.h6),
+      change24h: safeNum(pair.priceChange?.h24),
+      volume24h: safeNum(pair.volume?.h24),
+      liquidity: safeNum(pair.liquidity?.usd),
+      symbol:    pair.baseToken?.symbol?.toUpperCase() || ca.slice(0, 6),
+      tokenName: pair.baseToken?.name || '',
+      chain:     pair.chainId || 'solana',
     }
   } catch { return null }
+}
+
+// ── Birdeye on-chain data (Solana tokens, no API key needed for basic) ──────
+async function fetchBirdeye(ca) {
+  try {
+    const res = await fetch(
+      `https://public-api.birdeye.so/public/token_overview?address=${ca}`,
+      { headers: { 'X-Chain': 'solana' }, signal: AbortSignal.timeout(5000) }
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    const d = data?.data
+    if (!d) return null
+    return {
+      holders:       safeNum(d.holder),
+      holderChange24h: safeNum(d.holderChange?.['24h']),
+      uniqueWallet24h: safeNum(d.uniqueWallet24h),
+      buyCount24h:   safeNum(d.buy24h),
+      sellCount24h:  safeNum(d.sell24h),
+      buySellRatio:  d.sell24h > 0 ? safeNum(d.buy24h) / safeNum(d.sell24h) : 1,
+    }
+  } catch { return null }
+}
+
+// ── Reddit sentiment for a specific token ────────────────────────────────────
+async function fetchMemeCoinReddit(symbol, tokenName) {
+  try {
+    const queries = [symbol.toLowerCase(), tokenName?.toLowerCase()].filter(Boolean)
+    const results = []
+    for (const sub of ['CryptoMoonShots', 'memecoin', 'SatoshiStreetBets', 'solana']) {
+      const res = await fetch(
+        `https://www.reddit.com/r/${sub}/search.json?q=${queries[0]}&sort=new&limit=5&t=day`,
+        { headers: { 'User-Agent': 'AgentArena/1.0' }, signal: AbortSignal.timeout(4000) }
+      )
+      if (!res.ok) continue
+      const data = await res.json()
+      const posts = data?.data?.children || []
+      for (const post of posts) {
+        const title = (post.data?.title || '').toLowerCase()
+        const matchesToken = queries.some(q => title.includes(q))
+        if (matchesToken) {
+          results.push({
+            title: post.data.title,
+            score: safeNum(post.data.score),
+            comments: safeNum(post.data.num_comments),
+            created: post.data.created_utc,
+            sub,
+          })
+        }
+      }
+    }
+    // Sort by recency + engagement
+    results.sort((a, b) => (b.score + b.comments * 2) - (a.score + a.comments * 2))
+    return results.slice(0, 5)
+  } catch { return [] }
+}
+
+// ── 4chan /biz/ mentions ──────────────────────────────────────────────────────
+async function fetch4chanMentions(symbol) {
+  try {
+    const res = await fetch('https://a.4cdn.org/biz/catalog.json',
+      { signal: AbortSignal.timeout(4000) }
+    )
+    if (!res.ok) return []
+    const pages = await res.json()
+    const threads = pages.flatMap(p => p.threads || [])
+    const sym = symbol.toLowerCase()
+    const mentions = threads.filter(t => {
+      const text = ((t.sub || '') + ' ' + (t.com || '')).toLowerCase()
+      return text.includes(sym)
+    })
+    return mentions.map(t => ({
+      title: t.sub || t.com?.slice(0, 80) || 'No title',
+      replies: safeNum(t.replies),
+    })).slice(0, 3)
+  } catch { return [] }
+}
+
+// ── Claude AI decision for meme coin ─────────────────────────────────────────
+async function getMemeDecision(symbol, ca, dexData, birdeyeData, redditPosts, fourchanMentions, openPos, fearGreed) {
+  const {
+    price, change1h, change6h, change24h, volume24h, liquidity, tokenName
+  } = dexData
+
+  const onChain = birdeyeData ? `
+ON-CHAIN DATA:
+- Holders: ${birdeyeData.holders.toLocaleString()}
+- Holder change 24h: ${birdeyeData.holderChange24h > 0 ? '+' : ''}${birdeyeData.holderChange24h}
+- Unique wallets 24h: ${birdeyeData.uniqueWallet24h.toLocaleString()}
+- Buy/Sell ratio 24h: ${birdeyeData.buySellRatio.toFixed(2)} (>1 = more buys)` : 'ON-CHAIN DATA: Unavailable'
+
+  const social = redditPosts.length > 0
+    ? 'REDDIT (last 24h):\n' + redditPosts.map(p => `- r/${p.sub}: "${p.title}" (${p.score} upvotes, ${p.comments} comments)`).join('\n')
+    : 'REDDIT: No recent mentions'
+
+  const fourchan = fourchanMentions.length > 0
+    ? '4CHAN /BIZ/:\n' + fourchanMentions.map(m => `- "${m.title}" (${m.replies} replies)`).join('\n')
+    : '4CHAN /BIZ/: No mentions'
+
+  const position = openPos
+    ? `CURRENT POSITION: Holding ${safeNum(openPos.amount).toFixed(4)} units @ $${safeNum(openPos.entry_price).toFixed(8)} (${((price - safeNum(openPos.entry_price)) / safeNum(openPos.entry_price) * 100).toFixed(1)}% P&L)`
+    : 'CURRENT POSITION: None'
+
+  const prompt = `You are an expert meme coin trader on Solana. Analyse this token and decide whether to BUY, HOLD, or CLOSE.
+
+TOKEN: ${symbol} (${tokenName || ca.slice(0,8)})
+CONTRACT: ${ca}
+
+PRICE ACTION:
+- Price: $${price < 0.001 ? price.toFixed(8) : price.toFixed(6)}
+- 1h change: ${change1h > 0 ? '+' : ''}${change1h}%
+- 6h change: ${change6h > 0 ? '+' : ''}${change6h}%  
+- 24h change: ${change24h > 0 ? '+' : ''}${change24h}%
+- 24h volume: $${volume24h.toLocaleString()}
+- Liquidity: $${liquidity.toLocaleString()}
+
+${onChain}
+
+MARKET SENTIMENT:
+- Fear & Greed: ${fearGreed.value}/100 (${fearGreed.value_classification})
+
+${social}
+
+${fourchan}
+
+${position}
+
+DECISION RULES:
+- BUY only if: strong social buzz + positive price momentum + growing holders + buy/sell ratio > 1.2
+- CLOSE if: social buzz dying down + price reversing + or holding >20% profit
+- HOLD if: position exists and still bullish
+- Never buy in extreme fear (F&G < 20) unless very strong social signal
+- Never buy if liquidity < $50,000 (rug risk)
+
+Respond with ONLY this JSON:
+{"action":"BUY","confidence":8,"reasoning":"specific reason citing actual data points"}
+
+action must be: BUY, HOLD, or CLOSE`
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 300,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    const text = response.content[0]?.text || '{}'
+    const jsonMatch = text.match(/\{[^{}]*\}/)
+    if (!jsonMatch) return { action: 'HOLD', confidence: 0, reasoning: 'No decision' }
+    return JSON.parse(jsonMatch[0])
+  } catch (err) {
+    console.error('Meme decision error:', err.message)
+    return { action: 'HOLD', confidence: 0, reasoning: 'Error' }
+  }
 }
 
 async function fetchFearGreed() {
@@ -233,7 +388,7 @@ Return ONLY the JSON array. No text before or after.`
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }],
     })
@@ -277,7 +432,7 @@ Rules:
 
     // Use web search tool for research
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-5',
       max_tokens: 1024,
       tools: [{ type: 'web_search_20250305', name: 'web_search' }],
       messages: [{ role: 'user', content: prompt }],
@@ -543,53 +698,109 @@ export async function POST(request) {
       }
     }
 
-    // ── Custom CA meme coins ────────────────────────────────────────────
+    // ── Custom CA meme coins — AI-powered with Birdeye + Reddit + 4chan ────
     const caEntries = typeof customCoinCas === 'object' && !Array.isArray(customCoinCas)
       ? Object.entries(customCoinCas) : []
 
     for (const [, ca] of caEntries) {
       if (!ca) continue
+
+      // 1. Get DexScreener price + momentum data
       const dex = await fetchDexScreener(ca)
       if (!dex || !dex.price || dex.price <= 0) continue
 
       const { symbol, price, change1h, change6h, change24h, volume24h, liquidity } = dex
       const openPos = openPositions.find(t => t.coin === symbol)
 
-      let bullish = 0
-      if (change1h  >  3) bullish++
-      if (change6h  >  8) bullish++
-      if (change24h > 15) bullish++
-      if (volume24h > 50000) bullish++
-      if (liquidity > 20000) bullish++
+      // Hard safety checks — skip immediately if these fail
+      if (liquidity < 30000) continue  // rug risk
+      if (volume24h < 10000) continue  // no real trading activity
 
-      if (!openPos && bullish >= 3 && openPositions.length < maxPositions && cashBalance > 100) {
-        const tradeSizeUSD = (cashBalance * 8) / 100
-        const units = tradeSizeUSD / price
-        cashBalance -= tradeSizeUSD; investedValue += tradeSizeUSD
+      // 2. Fetch on-chain data from Birdeye (parallel)
+      const [birdeyeData, redditPosts, fourchanMentions] = await Promise.all([
+        fetchBirdeye(ca),
+        fetchMemeCoinReddit(symbol, dex.tokenName),
+        fetch4chanMentions(symbol),
+      ])
 
-        await supabase.from('trades').insert({
-          agent_id: agentId, user_id: userId, coin: symbol, type: 'buy',
-          entry_price: parseFloat(price.toFixed(8)), amount: parseFloat(units.toFixed(8)),
-          status: 'open',
-          reasoning: `MEME BUY — ${bullish}/5 signals. 1h:${change1h}% 24h:${change24h}%`,
-        })
-        tradeResults.push({ action: 'BUY', coin: symbol, price, amount: units, meme: true })
-      }
-
+      // 3. Hard stop-loss / take-profit before AI decision
       if (openPos) {
         const entryPrice = safeNum(openPos.entry_price, price)
         const changePct  = entryPrice > 0 ? ((price - entryPrice) / entryPrice) * 100 : 0
+
         if (changePct >= takeProfitPct || changePct <= -stopLossPct) {
+          // Auto-close without AI for speed
           const posUnits = safeNum(openPos.amount, 0)
-          const pnl = (price - entryPrice) * posUnits
-          cashBalance += (entryPrice * posUnits) + pnl
-          investedValue = Math.max(0, investedValue - (entryPrice * posUnits))
+          const pnl      = (price - entryPrice) * posUnits
+          cashBalance   += (entryPrice * posUnits) + pnl
+          investedValue  = Math.max(0, investedValue - (entryPrice * posUnits))
           await supabase.from('trades').update({
             status: 'closed', exit_price: parseFloat(price.toFixed(8)),
             pnl: parseFloat(pnl.toFixed(4)), closed_at: new Date().toISOString(),
+            reasoning: changePct >= takeProfitPct
+              ? `TAKE PROFIT @ $${price.toFixed(8)} (+${changePct.toFixed(1)}%)`
+              : `STOP LOSS @ $${price.toFixed(8)} (${changePct.toFixed(1)}%)`,
           }).eq('id', openPos.id)
-          tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl })
+          tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl,
+            reasoning: changePct >= takeProfitPct ? 'Take profit' : 'Stop loss' })
+          continue
         }
+      }
+
+      // 4. Ask Claude AI with all the data
+      const aiDecision = await getMemeDecision(
+        symbol, ca, dex, birdeyeData, redditPosts, fourchanMentions, openPos, fearGreed
+      )
+
+      console.log(`Meme AI [${symbol}]: ${aiDecision.action} (confidence: ${aiDecision.confidence}) — ${aiDecision.reasoning?.slice(0, 80)}`)
+
+      // 5. Execute AI decision
+      if (aiDecision.action === 'BUY' && !openPos && aiDecision.confidence >= 7) {
+        // Extra safety gates even after AI says buy
+        if (openPositions.length >= maxPositions) continue
+        if (cashBalance < 200) continue
+
+        const tradeSizeUSD = (cashBalance * 8) / 100
+        const units        = tradeSizeUSD / price
+        cashBalance   -= tradeSizeUSD
+        investedValue += tradeSizeUSD
+
+        const socialSummary = [
+          redditPosts.length > 0 ? `${redditPosts.length} Reddit posts` : null,
+          fourchanMentions.length > 0 ? `${fourchanMentions.length} 4chan threads` : null,
+          birdeyeData ? `${birdeyeData.holders.toLocaleString()} holders, buy/sell ratio ${birdeyeData.buySellRatio.toFixed(2)}` : null,
+        ].filter(Boolean).join(' · ')
+
+        await supabase.from('trades').insert({
+          agent_id:    agentId,
+          user_id:     userId,
+          coin:        symbol,
+          type:        'buy',
+          entry_price: parseFloat(price.toFixed(8)),
+          amount:      parseFloat(units.toFixed(8)),
+          status:      'open',
+          reasoning:   `AI MEME BUY (${aiDecision.confidence}/10): ${aiDecision.reasoning}${socialSummary ? ' | ' + socialSummary : ''}`,
+        })
+        tradeResults.push({ action: 'BUY', coin: symbol, price, amount: units, meme: true,
+          confidence: aiDecision.confidence, reasoning: aiDecision.reasoning })
+      }
+
+      if (aiDecision.action === 'CLOSE' && openPos) {
+        const entryPrice = safeNum(openPos.entry_price, price)
+        const posUnits   = safeNum(openPos.amount, 0)
+        const pnl        = (price - entryPrice) * posUnits
+        cashBalance   += (entryPrice * posUnits) + pnl
+        investedValue  = Math.max(0, investedValue - (entryPrice * posUnits))
+
+        await supabase.from('trades').update({
+          status:     'closed',
+          exit_price: parseFloat(price.toFixed(8)),
+          pnl:        parseFloat(pnl.toFixed(4)),
+          closed_at:  new Date().toISOString(),
+          reasoning:  `AI CLOSE (${aiDecision.confidence}/10): ${aiDecision.reasoning}`,
+        }).eq('id', openPos.id)
+        tradeResults.push({ action: 'CLOSE', coin: symbol, price, pnl,
+          confidence: aiDecision.confidence, reasoning: aiDecision.reasoning })
       }
     }
 
